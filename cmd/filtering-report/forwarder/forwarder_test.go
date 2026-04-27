@@ -62,7 +62,7 @@ func TestForwarder_ForwardsMessages(t *testing.T) {
 	}
 
 	ctx := t.Context()
-	forwarder := NewTestForwarder(t, queueClient, endpoint.URL())
+	forwarder := NewTestForwarder(t, queueClient, nil, endpoint.URL())
 	var consecutiveRetryableHTTPErrors int
 	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
 	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
@@ -117,7 +117,7 @@ func TestForwarder_EndpointFailure_DoesNotDelete(t *testing.T) {
 	}
 
 	ctx := t.Context()
-	forwarder := NewTestForwarder(t, queueClient, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
 	var consecutiveRetryableHTTPErrors int
 	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
 
@@ -137,7 +137,7 @@ func TestForwarder_EmptyQueue(t *testing.T) {
 
 	queueClient := &sqsclient.MockQueueClient{}
 
-	forwarder := NewTestForwarder(t, queueClient, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
 	var consecutiveRetryableHTTPErrors int
 	interval := forwarder.pollAndForward(t.Context(), &consecutiveRetryableHTTPErrors)
 
@@ -163,7 +163,7 @@ func TestForwarder_ReceiveError(t *testing.T) {
 		ReceiveErr: fmt.Errorf("simulated SQS error"),
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
 	var consecutiveRetryableHTTPErrors int
 	interval := forwarder.pollAndForward(t.Context(), &consecutiveRetryableHTTPErrors)
 
@@ -199,7 +199,7 @@ func TestForwarder_DeleteError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, endpoint.URL())
+	forwarder := NewTestForwarder(t, queueClient, nil, endpoint.URL())
 	var consecutiveRetryableHTTPErrors int
 	interval := forwarder.pollAndForward(t.Context(), &consecutiveRetryableHTTPErrors)
 
@@ -227,7 +227,7 @@ func TestForwarder_RetryableHTTPErrorSlowdown_AfterThreshold(t *testing.T) {
 	rpcClient := stack.Attach()
 	t.Cleanup(func() { rpcClient.Close() })
 
-	forwarder := NewTestForwarder(t, queueClient, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
 	threshold := forwarder.config.ExternalEndpointRetryableHTTPErrorSlowdown.ConsecutiveRetryableHTTPErrors
 
 	// Enqueue enough messages to exceed the threshold.
@@ -312,7 +312,7 @@ func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
 	ctx := t.Context()
 	var consecutiveRetryableHTTPErrors int
 
@@ -341,7 +341,7 @@ func TestForwarder_RetryableHTTPErrorSlowdown_NonRetryableErrorDoesNotCount(t *t
 	rpcClient := stack.Attach()
 	t.Cleanup(func() { rpcClient.Close() })
 
-	forwarder := NewTestForwarder(t, queueClient, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
 	threshold := forwarder.config.ExternalEndpointRetryableHTTPErrorSlowdown.ConsecutiveRetryableHTTPErrors
 
 	reports := make([]addressfilter.FilteredTxReport, threshold+1)
@@ -376,5 +376,95 @@ func TestForwarder_RetryableHTTPErrorSlowdown_NonRetryableErrorDoesNotCount(t *t
 	}
 	if consecutiveRetryableHTTPErrors != 0 {
 		t.Fatalf("expected 0 consecutive retryable errors for non-retryable errors, got %d", consecutiveRetryableHTTPErrors)
+	}
+}
+
+func TestForwarder_DLQ_NonRetryableErrorSentToDLQ(t *testing.T) {
+	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer externalEndpointServer.Close()
+
+	queueClient := &sqsclient.MockQueueClient{}
+	dlqClient := &sqsclient.MockQueueClient{}
+
+	stack := api.NewTestStack(t, queueClient)
+	rpcClient := stack.Attach()
+	t.Cleanup(func() { rpcClient.Close() })
+
+	reports := []addressfilter.FilteredTxReport{{
+		ID:                "",
+		TxHash:            common.HexToHash("0x01"),
+		TxRLP:             nil,
+		FilteredAddresses: nil,
+		ChainID:           0,
+		BlockNumber:       0,
+		ParentBlockHash:   common.Hash{},
+		PositionInBlock:   0,
+		FilteredAt:        time.Time{},
+		IsDelayed:         false,
+		DelayedReportData: nil,
+	}}
+	if err := rpcClient.Call(nil, "filteringreport_reportFilteredTransactions", reports); err != nil {
+		t.Fatal(err)
+	}
+
+	forwarder := NewTestForwarder(t, queueClient, dlqClient, externalEndpointServer.URL)
+	var consecutiveRetryableHTTPErrors int
+	forwarder.pollAndForward(t.Context(), &consecutiveRetryableHTTPErrors)
+
+	// Message should have been sent to DLQ.
+	sentBodies := dlqClient.SentBodies()
+	if len(sentBodies) != 1 {
+		t.Fatalf("expected 1 message sent to DLQ, got %d", len(sentBodies))
+	}
+
+	// Message should have been deleted from main queue.
+	deleted := queueClient.DeletedReceiptHandles()
+	if len(deleted) != 1 {
+		t.Fatalf("expected 1 delete from main queue after DLQ send, got %d", len(deleted))
+	}
+}
+
+func TestForwarder_DLQ_SendFailureLeavesMessageInQueue(t *testing.T) {
+	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer externalEndpointServer.Close()
+
+	queueClient := &sqsclient.MockQueueClient{}
+	dlqClient := &sqsclient.MockQueueClient{
+		SendErr: fmt.Errorf("simulated DLQ send error"),
+	}
+
+	stack := api.NewTestStack(t, queueClient)
+	rpcClient := stack.Attach()
+	t.Cleanup(func() { rpcClient.Close() })
+
+	reports := []addressfilter.FilteredTxReport{{
+		ID:                "",
+		TxHash:            common.HexToHash("0x01"),
+		TxRLP:             nil,
+		FilteredAddresses: nil,
+		ChainID:           0,
+		BlockNumber:       0,
+		ParentBlockHash:   common.Hash{},
+		PositionInBlock:   0,
+		FilteredAt:        time.Time{},
+		IsDelayed:         false,
+		DelayedReportData: nil,
+	}}
+	if err := rpcClient.Call(nil, "filteringreport_reportFilteredTransactions", reports); err != nil {
+		t.Fatal(err)
+	}
+
+	forwarder := NewTestForwarder(t, queueClient, dlqClient, externalEndpointServer.URL)
+	var consecutiveRetryableHTTPErrors int
+	forwarder.pollAndForward(t.Context(), &consecutiveRetryableHTTPErrors)
+
+	// DLQ send failed, so message should NOT have been deleted from main queue.
+	deleted := queueClient.DeletedReceiptHandles()
+	if len(deleted) != 0 {
+		t.Fatalf("expected 0 deletes when DLQ send fails, got %d", len(deleted))
 	}
 }

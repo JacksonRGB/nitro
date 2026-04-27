@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/spf13/pflag"
 
 	"github.com/ethereum/go-ethereum/log"
@@ -88,10 +89,11 @@ type Forwarder struct {
 	stopwaiter.StopWaiter
 	config      *Config
 	queueClient sqsclient.QueueClient
+	dlqClient   sqsclient.QueueClient
 	httpClient  *http.Client
 }
 
-func New(config *Config, queueClient sqsclient.QueueClient) (*Forwarder, error) {
+func New(config *Config, queueClient sqsclient.QueueClient, dlqClient sqsclient.QueueClient) (*Forwarder, error) {
 	if config == nil {
 		return nil, errors.New("config must not be nil")
 	}
@@ -101,6 +103,7 @@ func New(config *Config, queueClient sqsclient.QueueClient) (*Forwarder, error) 
 	return &Forwarder{
 		config:      config,
 		queueClient: queueClient,
+		dlqClient:   dlqClient,
 		httpClient:  &http.Client{Timeout: config.ExternalEndpoint.Timeout},
 	}, nil
 }
@@ -128,10 +131,14 @@ func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableHTTP
 	if err := r.forwardToEndpoint(ctx, *msg.Body); err != nil {
 		log.Error("Failed to forward report to external endpoint", "err", err, "messageId", *msg.MessageId)
 		var httpErr *httperror.HTTPError
-		if errors.As(err, &httpErr) && httpErr.IsRetryable() {
-			*consecutiveRetryableHTTPErrors++
-			if *consecutiveRetryableHTTPErrors >= r.config.ExternalEndpointRetryableHTTPErrorSlowdown.ConsecutiveRetryableHTTPErrors {
-				return r.config.ExternalEndpointRetryableHTTPErrorSlowdown.Duration
+		if errors.As(err, &httpErr) {
+			if httpErr.IsRetryable() {
+				*consecutiveRetryableHTTPErrors++
+				if *consecutiveRetryableHTTPErrors >= r.config.ExternalEndpointRetryableHTTPErrorSlowdown.ConsecutiveRetryableHTTPErrors {
+					return r.config.ExternalEndpointRetryableHTTPErrorSlowdown.Duration
+				}
+			} else {
+				r.sendToDLQ(ctx, msg)
 			}
 		}
 		return 0
@@ -141,6 +148,19 @@ func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableHTTP
 		log.Error("Failed to delete SQS message after forwarding", "err", err, "messageId", *msg.MessageId)
 	}
 	return 0
+}
+
+func (r *Forwarder) sendToDLQ(ctx context.Context, msg sqstypes.Message) {
+	if r.dlqClient == nil {
+		return
+	}
+	if err := r.dlqClient.Send(ctx, *msg.Body); err != nil {
+		log.Error("Failed to send message to DLQ", "err", err, "messageId", *msg.MessageId)
+		return
+	}
+	if err := r.queueClient.Delete(ctx, *msg.ReceiptHandle); err != nil {
+		log.Error("Failed to delete SQS message after sending to DLQ", "err", err, "messageId", *msg.MessageId)
+	}
 }
 
 func (r *Forwarder) forwardToEndpoint(ctx context.Context, body string) error {

@@ -42,6 +42,7 @@ type FilteringReportConfig struct {
 	Auth genericconf.AuthRPCConfig `koanf:"auth"`
 
 	Queue           sqsclient.QueueConfig `koanf:"queue"`
+	DLQ             sqsclient.QueueConfig `koanf:"dlq"`
 	ReportForwarder forwarder.Config      `koanf:"report-forwarder"`
 }
 
@@ -81,6 +82,7 @@ var DefaultFilteringReportConfig = FilteringReportConfig{
 	IPC:             IPCConfigDefault,
 	Auth:            genericconf.AuthRPCConfigDefault,
 	Queue:           sqsclient.DefaultQueueConfig,
+	DLQ:             sqsclient.DefaultQueueConfig,
 	ReportForwarder: forwarder.DefaultConfig,
 }
 
@@ -113,6 +115,7 @@ func addFlags(f *pflag.FlagSet) {
 	genericconf.IPCConfigAddOptions("ipc", f)
 
 	sqsclient.QueueConfigAddOptions("queue", f)
+	sqsclient.QueueConfigAddOptions("dlq", f)
 	forwarder.ConfigAddOptions("report-forwarder", f)
 }
 
@@ -134,6 +137,8 @@ func parseConfig(args []string) (*FilteringReportConfig, error) {
 		err = confighelpers.DumpConfig(k, map[string]interface{}{
 			"queue.sqs-client.access-key": "",
 			"queue.sqs-client.secret-key": "",
+			"dlq.sqs-client.access-key":   "",
+			"dlq.sqs-client.secret-key":   "",
 		})
 		if err != nil {
 			return nil, fmt.Errorf("error removing extra parameters before dump: %w", err)
@@ -202,7 +207,15 @@ func mainImpl() int {
 		fmt.Fprintf(os.Stderr, "error creating SQS client: %v\n", err)
 		return 1
 	}
-	fwd, err := forwarder.New(&config.ReportForwarder, queueClient)
+	var dlqClient sqsclient.QueueClient
+	if config.DLQ.QueueURL != "" {
+		dlqClient, err = sqsclient.NewQueueClient(ctx, &config.DLQ)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error creating DLQ SQS client: %v\n", err)
+			return 1
+		}
+	}
+	fwd, err := forwarder.New(&config.ReportForwarder, queueClient, dlqClient)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating forwarder: %v\n", err)
 		return 1
