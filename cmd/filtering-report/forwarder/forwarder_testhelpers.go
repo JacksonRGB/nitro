@@ -69,6 +69,7 @@ func NewTestForwarder(t *testing.T, queueClient sqsclient.QueueClient, endpointU
 			URL:     endpointURL,
 			Timeout: genericconf.HTTPClientConfigDefault.Timeout,
 		},
+		ExternalEndpointRetryableHTTPErrorSlowdown: DefaultExternalEndpointRetryableHTTPErrorSlowdownConfig,
 	}
 	fwd, err := New(config, queueClient)
 	if err != nil {

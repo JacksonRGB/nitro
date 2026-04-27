@@ -17,22 +17,50 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/offchainlabs/nitro/cmd/genericconf"
+	"github.com/offchainlabs/nitro/util/httperror"
 	"github.com/offchainlabs/nitro/util/sqsclient"
 	"github.com/offchainlabs/nitro/util/stopwaiter"
 )
 
+type ExternalEndpointRetryableHTTPErrorSlowdownConfig struct {
+	Duration                time.Duration `koanf:"duration"`
+	ConsecutiveRetryableHTTPErrors int           `koanf:"consecutive-retryable-errors"`
+}
+
+var DefaultExternalEndpointRetryableHTTPErrorSlowdownConfig = ExternalEndpointRetryableHTTPErrorSlowdownConfig{
+	Duration:                2 * time.Minute,
+	ConsecutiveRetryableHTTPErrors: 3,
+}
+
+func (c *ExternalEndpointRetryableHTTPErrorSlowdownConfig) Validate() error {
+	if c.Duration < 0 {
+		return fmt.Errorf("duration must be non-negative, got %s", c.Duration)
+	}
+	if c.ConsecutiveRetryableHTTPErrors <= 0 {
+		return fmt.Errorf("consecutive-retryable-errors must be positive, got %d", c.ConsecutiveRetryableHTTPErrors)
+	}
+	return nil
+}
+
+func ExternalEndpointRetryableHTTPErrorSlowdownConfigAddOptions(prefix string, f *pflag.FlagSet) {
+	f.Duration(prefix+".duration", DefaultExternalEndpointRetryableHTTPErrorSlowdownConfig.Duration, "how long a worker sleeps when consecutive retryable errors threshold is reached")
+	f.Int(prefix+".consecutive-retryable-errors", DefaultExternalEndpointRetryableHTTPErrorSlowdownConfig.ConsecutiveRetryableHTTPErrors, "number of consecutive retryable errors a worker encounters before slowing down")
+}
+
 type Config struct {
-	Workers            uint                         `koanf:"workers"`
-	PollInterval       time.Duration                `koanf:"poll-interval"`
-	SQSWaitTimeSeconds int32                        `koanf:"sqs-wait-time-seconds"`
-	ExternalEndpoint   genericconf.HTTPClientConfig `koanf:"external-endpoint"`
+	Workers                             uint                                       `koanf:"workers"`
+	PollInterval                        time.Duration                              `koanf:"poll-interval"`
+	SQSWaitTimeSeconds                  int32                                      `koanf:"sqs-wait-time-seconds"`
+	ExternalEndpoint                    genericconf.HTTPClientConfig               `koanf:"external-endpoint"`
+	ExternalEndpointRetryableHTTPErrorSlowdown ExternalEndpointRetryableHTTPErrorSlowdownConfig  `koanf:"external-endpoint-retryable-error-slowdown"`
 }
 
 var DefaultConfig = Config{
-	Workers:            1,
-	PollInterval:       1 * time.Second,
-	SQSWaitTimeSeconds: 5,
-	ExternalEndpoint:   genericconf.HTTPClientConfigDefault,
+	Workers:                             1,
+	PollInterval:                        1 * time.Second,
+	SQSWaitTimeSeconds:                  5,
+	ExternalEndpoint:                    genericconf.HTTPClientConfigDefault,
+	ExternalEndpointRetryableHTTPErrorSlowdown: DefaultExternalEndpointRetryableHTTPErrorSlowdownConfig,
 }
 
 func (c *Config) Validate() error {
@@ -42,6 +70,9 @@ func (c *Config) Validate() error {
 	if c.SQSWaitTimeSeconds < 0 {
 		return fmt.Errorf("sqs-wait-time-seconds must be non-negative, got %d", c.SQSWaitTimeSeconds)
 	}
+	if err := c.ExternalEndpointRetryableHTTPErrorSlowdown.Validate(); err != nil {
+		return err
+	}
 	return c.ExternalEndpoint.Validate()
 }
 
@@ -50,6 +81,7 @@ func ConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Duration(prefix+".poll-interval", DefaultConfig.PollInterval, "interval between SQS polls when queue is empty")
 	f.Int32(prefix+".sqs-wait-time-seconds", DefaultConfig.SQSWaitTimeSeconds, "SQS long polling wait time in seconds")
 	genericconf.HTTPClientConfigAddOptions(prefix+".external-endpoint", f)
+	ExternalEndpointRetryableHTTPErrorSlowdownConfigAddOptions(prefix+".external-endpoint-retryable-error-slowdown", f)
 }
 
 type Forwarder struct {
@@ -76,11 +108,14 @@ func New(config *Config, queueClient sqsclient.QueueClient) (*Forwarder, error) 
 func (r *Forwarder) Start(ctx context.Context) {
 	r.StopWaiter.Start(ctx, r)
 	for i := uint(0); i < r.config.Workers; i++ {
-		r.CallIteratively(r.pollAndForward)
+		var consecutiveRetryableHTTPErrors int
+		r.CallIteratively(func(ctx context.Context) time.Duration {
+			return r.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
+		})
 	}
 }
 
-func (r *Forwarder) pollAndForward(ctx context.Context) time.Duration {
+func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableHTTPErrors *int) time.Duration {
 	msgs, err := r.queueClient.Receive(ctx, r.config.SQSWaitTimeSeconds, 1)
 	if err != nil {
 		log.Error("Failed to receive SQS messages", "err", err)
@@ -92,8 +127,16 @@ func (r *Forwarder) pollAndForward(ctx context.Context) time.Duration {
 	msg := msgs[0]
 	if err := r.forwardToEndpoint(ctx, *msg.Body); err != nil {
 		log.Error("Failed to forward report to external endpoint", "err", err, "messageId", *msg.MessageId)
+		var httpErr *httperror.HTTPError
+		if errors.As(err, &httpErr) && httpErr.IsRetryable() {
+			*consecutiveRetryableHTTPErrors++
+			if *consecutiveRetryableHTTPErrors >= r.config.ExternalEndpointRetryableHTTPErrorSlowdown.ConsecutiveRetryableHTTPErrors {
+				return r.config.ExternalEndpointRetryableHTTPErrorSlowdown.Duration
+			}
+		}
 		return 0
 	}
+	*consecutiveRetryableHTTPErrors = 0
 	if err = r.queueClient.Delete(ctx, *msg.ReceiptHandle); err != nil {
 		log.Error("Failed to delete SQS message after forwarding", "err", err, "messageId", *msg.MessageId)
 	}
@@ -121,7 +164,7 @@ func (r *Forwarder) forwardToEndpoint(ctx context.Context, body string) error {
 		if readErr != nil {
 			return fmt.Errorf("external endpoint returned status %d (body read error: %w)", resp.StatusCode, readErr)
 		}
-		return fmt.Errorf("external endpoint returned status %d: %s", resp.StatusCode, string(respBody))
+		return &httperror.HTTPError{StatusCode: resp.StatusCode, Body: string(respBody)}
 	}
 	return nil
 }
