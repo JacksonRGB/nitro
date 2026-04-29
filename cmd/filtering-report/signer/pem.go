@@ -16,14 +16,6 @@ const (
 	pemBlockTypeCertificate = "CERTIFICATE"
 )
 
-var (
-	errDuplicatePrivateKey = errors.New("PEM contains more than one PRIVATE KEY block")
-	errMissingPrivateKey   = errors.New("no PRIVATE KEY block found in PEM")
-	errMissingCertificate  = errors.New("no CERTIFICATE block found in PEM")
-	errLeafIsCA            = errors.New("first certificate in PEM is a CA, expected leaf")
-	errKeyCertMismatch     = errors.New("private key does not match leaf certificate public key")
-)
-
 func parseCombinedPEM(data []byte) (*credentials, error) {
 	var privateKey ed25519.PrivateKey
 	var leaf *x509.Certificate
@@ -38,7 +30,7 @@ func parseCombinedPEM(data []byte) (*credentials, error) {
 		switch block.Type {
 		case pemBlockTypePrivateKey:
 			if privateKey != nil {
-				return nil, errDuplicatePrivateKey
+				return nil, errors.New("PEM contains more than one PRIVATE KEY block")
 			}
 			key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 			if err != nil {
@@ -67,13 +59,13 @@ func parseCombinedPEM(data []byte) (*credentials, error) {
 	}
 
 	if privateKey == nil {
-		return nil, errMissingPrivateKey
+		return nil, errors.New("no PRIVATE KEY block found in PEM")
 	}
 	if leaf == nil {
-		return nil, errMissingCertificate
+		return nil, errors.New("no CERTIFICATE block found in PEM")
 	}
 	if leaf.IsCA {
-		return nil, errLeafIsCA
+		return nil, errors.New("first certificate in PEM is a CA, expected leaf")
 	}
 
 	leafPub, ok := leaf.PublicKey.(ed25519.PublicKey)
@@ -85,7 +77,7 @@ func parseCombinedPEM(data []byte) (*credentials, error) {
 		return nil, fmt.Errorf("private key Public() did not return ed25519.PublicKey (got %T)", privateKey.Public())
 	}
 	if !derivedPub.Equal(leafPub) {
-		return nil, errKeyCertMismatch
+		return nil, errors.New("private key does not match leaf certificate public key")
 	}
 
 	return &credentials{

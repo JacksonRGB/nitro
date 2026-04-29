@@ -5,12 +5,14 @@ package signer
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -177,6 +179,21 @@ func TestNewVerifier_ConfigValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVerifier_RejectsCALeaf(t *testing.T) {
+	pki := signertest.NewPKI(t)
+	v := newTestVerifier(t, pki, VerifierConfig{})
+	body := []byte("{}")
+
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	signature := ed25519.Sign(pki.CAPriv, buildSigningPayload(timestamp, body))
+	req.Header.Set(HeaderSignature, base64.StdEncoding.EncodeToString(signature))
+	req.Header.Set(HeaderSignatureCert, base64.StdEncoding.EncodeToString(pki.CACertDER))
+	req.Header.Set(HeaderSignatureTimestamp, timestamp)
+
+	assertVerifyError(t, v.VerifyHTTPRequest(req, body), "is a CA")
 }
 
 func TestVerifier_RejectsTamperedBody(t *testing.T) {

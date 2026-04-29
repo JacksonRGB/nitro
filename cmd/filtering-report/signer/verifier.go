@@ -100,6 +100,9 @@ func (v *Verifier) VerifyHTTPRequest(req *http.Request, rawBody []byte) error {
 	if err != nil {
 		return fmt.Errorf("parse leaf certificate: %w", err)
 	}
+	if leaf.IsCA {
+		return errors.New("presented certificate is a CA, expected leaf")
+	}
 
 	now := v.now()
 	// ExtKeyUsageAny: cert-manager-issued leaves don't set ExtKeyUsage; the spec

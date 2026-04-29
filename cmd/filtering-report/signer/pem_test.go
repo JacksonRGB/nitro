@@ -4,20 +4,11 @@
 package signer
 
 import (
-	"errors"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/offchainlabs/nitro/cmd/filtering-report/signer/signertest"
 )
-
-func assertParseError(t *testing.T, got, want error) {
-	t.Helper()
-	if !errors.Is(got, want) {
-		t.Fatalf("expected error %v, got: %v", want, got)
-	}
-}
 
 func TestParseCombinedPEM_RejectsMismatchedKeyAndCert(t *testing.T) {
 	pki := signertest.NewPKI(t)
@@ -28,7 +19,7 @@ func TestParseCombinedPEM_RejectsMismatchedKeyAndCert(t *testing.T) {
 	bundle := slices.Concat(keyPEM, certPEM)
 
 	_, err := parseCombinedPEM(bundle)
-	assertParseError(t, err, errKeyCertMismatch)
+	assertVerifyError(t, err, "private key does not match leaf certificate public key")
 }
 
 func TestParseCombinedPEM_RejectsKeyOnly(t *testing.T) {
@@ -37,7 +28,7 @@ func TestParseCombinedPEM_RejectsKeyOnly(t *testing.T) {
 	keyPEM, _ := signertest.EncodePEMBundle(t, priv, leafDER)
 
 	_, err := parseCombinedPEM(keyPEM)
-	assertParseError(t, err, errMissingCertificate)
+	assertVerifyError(t, err, "no CERTIFICATE block found in PEM")
 }
 
 func TestParseCombinedPEM_RejectsCertOnly(t *testing.T) {
@@ -46,7 +37,7 @@ func TestParseCombinedPEM_RejectsCertOnly(t *testing.T) {
 	_, certPEM := signertest.EncodePEMBundle(t, priv, leafDER)
 
 	_, err := parseCombinedPEM(certPEM)
-	assertParseError(t, err, errMissingPrivateKey)
+	assertVerifyError(t, err, "no PRIVATE KEY block found in PEM")
 }
 
 func TestParseCombinedPEM_RejectsDuplicatePrivateKey(t *testing.T) {
@@ -56,7 +47,7 @@ func TestParseCombinedPEM_RejectsDuplicatePrivateKey(t *testing.T) {
 	bundle := slices.Concat(keyPEM, keyPEM, certPEM)
 
 	_, err := parseCombinedPEM(bundle)
-	assertParseError(t, err, errDuplicatePrivateKey)
+	assertVerifyError(t, err, "PEM contains more than one PRIVATE KEY block")
 }
 
 func TestParseCombinedPEM_RejectsCAAsLeaf(t *testing.T) {
@@ -65,13 +56,11 @@ func TestParseCombinedPEM_RejectsCAAsLeaf(t *testing.T) {
 	bundle := slices.Concat(keyPEM, certPEM)
 
 	_, err := parseCombinedPEM(bundle)
-	assertParseError(t, err, errLeafIsCA)
+	assertVerifyError(t, err, "first certificate in PEM is a CA, expected leaf")
 }
 
 func TestParseCombinedPEM_RejectsUnsupportedBlockType(t *testing.T) {
 	bundle := []byte("-----BEGIN EC PRIVATE KEY-----\nQUJD\n-----END EC PRIVATE KEY-----\n")
 	_, err := parseCombinedPEM(bundle)
-	if err == nil || !strings.Contains(err.Error(), "unsupported PEM block type") {
-		t.Fatalf("expected unsupported-block-type error, got: %v", err)
-	}
+	assertVerifyError(t, err, "unsupported PEM block type")
 }

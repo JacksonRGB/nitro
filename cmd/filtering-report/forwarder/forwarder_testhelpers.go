@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,8 +19,9 @@ import (
 )
 
 type MockExternalEndpoint struct {
-	server  *httptest.Server
-	reports chan *addressfilter.FilteredTxReport
+	server       *httptest.Server
+	reports      chan *addressfilter.FilteredTxReport
+	requestCount atomic.Int64
 }
 
 func NewMockExternalEndpoint(t *testing.T) *MockExternalEndpoint {
@@ -38,6 +40,7 @@ func newMockExternalEndpoint(t *testing.T, v *signer.Verifier) *MockExternalEndp
 		reports: make(chan *addressfilter.FilteredTxReport, 100),
 	}
 	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m.requestCount.Add(1)
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -78,7 +81,7 @@ func (m *MockExternalEndpoint) URL() string {
 }
 
 func (m *MockExternalEndpoint) ReceivedCount() int {
-	return len(m.reports)
+	return int(m.requestCount.Load())
 }
 
 func NewTestForwarder(t *testing.T, queueClient sqsclient.QueueClient, endpointURL string) *Forwarder {
