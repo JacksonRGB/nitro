@@ -43,7 +43,7 @@ func TestSigner_RoundTripVerifiedByVerifier(t *testing.T) {
 
 func TestSigner_ReloadPicksUpNewCert(t *testing.T) {
 	pki := signertest.NewPKI(t)
-	priv1, _, leafDER1 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv1, leafDER1 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
 	dir := t.TempDir()
 	pemPath := signertest.WriteCombinedPEM(t, dir, priv1, leafDER1)
 
@@ -53,7 +53,7 @@ func TestSigner_ReloadPicksUpNewCert(t *testing.T) {
 	}
 	first := s.creds.Load().leafCert.Raw
 
-	priv2, _, leafDER2 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv2, leafDER2 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
 	keyPEM2, certPEM2 := signertest.EncodePEMBundle(t, priv2, leafDER2)
 	if err := os.WriteFile(pemPath, append(keyPEM2, certPEM2...), 0o600); err != nil {
 		t.Fatalf("rewrite PEM: %v", err)
@@ -68,7 +68,7 @@ func TestSigner_ReloadPicksUpNewCert(t *testing.T) {
 
 func TestSigner_ReloadKeepsOldOnParseError(t *testing.T) {
 	pki := signertest.NewPKI(t)
-	priv, _, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
 	dir := t.TempDir()
 	pemPath := signertest.WriteCombinedPEM(t, dir, priv, leafDER)
 

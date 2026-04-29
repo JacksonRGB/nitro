@@ -72,11 +72,7 @@ func parseCombinedPEM(data []byte) (*credentials, error) {
 	if !ok {
 		return nil, fmt.Errorf("leaf certificate public key is not Ed25519 (got %T)", leaf.PublicKey)
 	}
-	derivedPub, ok := privateKey.Public().(ed25519.PublicKey)
-	if !ok {
-		return nil, fmt.Errorf("private key Public() did not return ed25519.PublicKey (got %T)", privateKey.Public())
-	}
-	if !derivedPub.Equal(leafPub) {
+	if !leafPub.Equal(privateKey.Public()) {
 		return nil, errors.New("private key does not match leaf certificate public key")
 	}
 

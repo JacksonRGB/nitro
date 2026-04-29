@@ -26,7 +26,7 @@ import (
 func newTestSigner(t *testing.T, leafOpts signertest.LeafOptions) (*Signer, *signertest.PKI) {
 	t.Helper()
 	pki := signertest.NewPKI(t)
-	priv, _, leafDER := pki.IssueLeaf(t, leafOpts)
+	priv, leafDER := pki.IssueLeaf(t, leafOpts)
 	pemPath := signertest.WriteCombinedPEM(t, t.TempDir(), priv, leafDER)
 	s, err := NewSigner(&Config{PEMFile: pemPath})
 	if err != nil {
@@ -39,7 +39,7 @@ func newTestSigner(t *testing.T, leafOpts signertest.LeafOptions) (*Signer, *sig
 // Empty cfg.ExpectedSAN defaults to testSAN; cfg.CARootPEMFile is always overwritten.
 func newTestVerifier(t *testing.T, trustPKI *signertest.PKI, cfg VerifierConfig) *Verifier {
 	t.Helper()
-	cfg.CARootPEMFile = signertest.WriteCAPEMFile(t, t.TempDir(), trustPKI.CACertPEM)
+	cfg.CARootPEMFile = signertest.WriteCAPEMFile(t, t.TempDir(), trustPKI.CACertPEM())
 	if cfg.ExpectedSAN == "" {
 		cfg.ExpectedSAN = testSAN
 	}
@@ -153,7 +153,7 @@ func TestVerifier_RejectsMissingHeader(t *testing.T) {
 func TestNewVerifier_ConfigValidation(t *testing.T) {
 	pki := signertest.NewPKI(t)
 	dir := t.TempDir()
-	validCAPath := signertest.WriteCAPEMFile(t, dir, pki.CACertPEM)
+	validCAPath := signertest.WriteCAPEMFile(t, dir, pki.CACertPEM())
 	noCertsPath := filepath.Join(dir, "garbage.pem")
 	if err := os.WriteFile(noCertsPath, []byte("not a certificate"), 0o600); err != nil {
 		t.Fatal(err)
@@ -190,7 +190,7 @@ func TestVerifier_RejectsCALeaf(t *testing.T) {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	signature := ed25519.Sign(pki.CAPriv, buildSigningPayload(timestamp, body))
 	req.Header.Set(HeaderSignature, base64.StdEncoding.EncodeToString(signature))
-	req.Header.Set(HeaderSignatureCert, base64.StdEncoding.EncodeToString(pki.CACertDER))
+	req.Header.Set(HeaderSignatureCert, base64.StdEncoding.EncodeToString(pki.CACert.Raw))
 	req.Header.Set(HeaderSignatureTimestamp, timestamp)
 
 	assertVerifyError(t, v.VerifyHTTPRequest(req, body), "is a CA")

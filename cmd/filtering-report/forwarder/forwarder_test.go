@@ -97,21 +97,19 @@ func TestForwarder_EndpointFailure_DoesNotDelete(t *testing.T) {
 	filteringReportClient := stack.Attach()
 	t.Cleanup(func() { filteringReportClient.Close() })
 
-	reports := []addressfilter.FilteredTxReport{
-		{
-			ID:                "",
-			TxHash:            common.HexToHash("0x01"),
-			TxRLP:             nil,
-			FilteredAddresses: nil,
-			ChainID:           0,
-			BlockNumber:       0,
-			ParentBlockHash:   common.Hash{},
-			PositionInBlock:   0,
-			FilteredAt:        time.Time{},
-			IsDelayed:         false,
-			DelayedReportData: nil,
-		},
-	}
+	reports := []addressfilter.FilteredTxReport{{
+		ID:                "",
+		TxHash:            common.HexToHash("0x01"),
+		TxRLP:             nil,
+		FilteredAddresses: nil,
+		ChainID:           0,
+		BlockNumber:       0,
+		ParentBlockHash:   common.Hash{},
+		PositionInBlock:   0,
+		FilteredAt:        time.Time{},
+		IsDelayed:         false,
+		DelayedReportData: nil,
+	}}
 	if err := filteringReportClient.Call(nil, "filteringreport_reportFilteredTransactions", reports); err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +178,19 @@ func TestForwarder_SignsRequest_VerifiedByVerifier(t *testing.T) {
 	rpcClient := stack.Attach()
 	t.Cleanup(func() { rpcClient.Close() })
 
-	reports := []addressfilter.FilteredTxReport{{TxHash: common.HexToHash("0x01")}}
+	reports := []addressfilter.FilteredTxReport{{
+		ID:                "",
+		TxHash:            common.HexToHash("0x01"),
+		TxRLP:             nil,
+		FilteredAddresses: nil,
+		ChainID:           0,
+		BlockNumber:       0,
+		ParentBlockHash:   common.Hash{},
+		PositionInBlock:   0,
+		FilteredAt:        time.Time{},
+		IsDelayed:         false,
+		DelayedReportData: nil,
+	}}
 	if err := rpcClient.Call(nil, "filteringreport_reportFilteredTransactions", reports); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +217,19 @@ func TestForwarder_DoesNotDeleteOnSignFailure(t *testing.T) {
 	rpcClient := stack.Attach()
 	t.Cleanup(func() { rpcClient.Close() })
 
-	reports := []addressfilter.FilteredTxReport{{TxHash: common.HexToHash("0x01")}}
+	reports := []addressfilter.FilteredTxReport{{
+		ID:                "",
+		TxHash:            common.HexToHash("0x01"),
+		TxRLP:             nil,
+		FilteredAddresses: nil,
+		ChainID:           0,
+		BlockNumber:       0,
+		ParentBlockHash:   common.Hash{},
+		PositionInBlock:   0,
+		FilteredAt:        time.Time{},
+		IsDelayed:         false,
+		DelayedReportData: nil,
+	}}
 	if err := rpcClient.Call(nil, "filteringreport_reportFilteredTransactions", reports); err != nil {
 		t.Fatal(err)
 	}

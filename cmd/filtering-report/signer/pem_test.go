@@ -12,8 +12,8 @@ import (
 
 func TestParseCombinedPEM_RejectsMismatchedKeyAndCert(t *testing.T) {
 	pki := signertest.NewPKI(t)
-	priv1, _, _ := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
-	_, _, leafDER2 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv1, _ := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	_, leafDER2 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
 
 	keyPEM, certPEM := signertest.EncodePEMBundle(t, priv1, leafDER2)
 	bundle := slices.Concat(keyPEM, certPEM)
@@ -24,7 +24,7 @@ func TestParseCombinedPEM_RejectsMismatchedKeyAndCert(t *testing.T) {
 
 func TestParseCombinedPEM_RejectsKeyOnly(t *testing.T) {
 	pki := signertest.NewPKI(t)
-	priv, _, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
 	keyPEM, _ := signertest.EncodePEMBundle(t, priv, leafDER)
 
 	_, err := parseCombinedPEM(keyPEM)
@@ -33,7 +33,7 @@ func TestParseCombinedPEM_RejectsKeyOnly(t *testing.T) {
 
 func TestParseCombinedPEM_RejectsCertOnly(t *testing.T) {
 	pki := signertest.NewPKI(t)
-	priv, _, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
 	_, certPEM := signertest.EncodePEMBundle(t, priv, leafDER)
 
 	_, err := parseCombinedPEM(certPEM)
@@ -42,7 +42,7 @@ func TestParseCombinedPEM_RejectsCertOnly(t *testing.T) {
 
 func TestParseCombinedPEM_RejectsDuplicatePrivateKey(t *testing.T) {
 	pki := signertest.NewPKI(t)
-	priv, _, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
 	keyPEM, certPEM := signertest.EncodePEMBundle(t, priv, leafDER)
 	bundle := slices.Concat(keyPEM, keyPEM, certPEM)
 
@@ -52,7 +52,7 @@ func TestParseCombinedPEM_RejectsDuplicatePrivateKey(t *testing.T) {
 
 func TestParseCombinedPEM_RejectsCAAsLeaf(t *testing.T) {
 	pki := signertest.NewPKI(t)
-	keyPEM, certPEM := signertest.EncodePEMBundle(t, pki.CAPriv, pki.CACertDER)
+	keyPEM, certPEM := signertest.EncodePEMBundle(t, pki.CAPriv, pki.CACert.Raw)
 	bundle := slices.Concat(keyPEM, certPEM)
 
 	_, err := parseCombinedPEM(bundle)

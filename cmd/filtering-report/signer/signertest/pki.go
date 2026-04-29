@@ -19,10 +19,8 @@ import (
 )
 
 type PKI struct {
-	CACertDER  []byte
-	CACertPEM  []byte
-	CACertX509 *x509.Certificate
-	CAPriv     ed25519.PrivateKey
+	CACert *x509.Certificate
+	CAPriv ed25519.PrivateKey
 }
 
 func NewPKI(t *testing.T) *PKI {
@@ -48,8 +46,11 @@ func NewPKI(t *testing.T) *PKI {
 	if err != nil {
 		t.Fatalf("parse CA cert: %v", err)
 	}
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	return &PKI{CACertDER: der, CACertPEM: pemBytes, CACertX509: cert, CAPriv: caPriv}
+	return &PKI{CACert: cert, CAPriv: caPriv}
+}
+
+func (p *PKI) CACertPEM() []byte {
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: p.CACert.Raw})
 }
 
 type LeafOptions struct {
@@ -68,7 +69,7 @@ func DefaultLeafOptions(uri string) LeafOptions {
 	}
 }
 
-func (p *PKI) IssueLeaf(t *testing.T, opts LeafOptions) (priv ed25519.PrivateKey, cert *x509.Certificate, leafDER []byte) {
+func (p *PKI) IssueLeaf(t *testing.T, opts LeafOptions) (priv ed25519.PrivateKey, leafDER []byte) {
 	t.Helper()
 	leafPub, leafPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -86,15 +87,11 @@ func (p *PKI) IssueLeaf(t *testing.T, opts LeafOptions) (priv ed25519.PrivateKey
 		KeyUsage:     opts.KeyUsage,
 		URIs:         []*url.URL{uri},
 	}
-	leafDER, err = x509.CreateCertificate(rand.Reader, tmpl, p.CACertX509, leafPub, p.CAPriv)
+	leafDER, err = x509.CreateCertificate(rand.Reader, tmpl, p.CACert, leafPub, p.CAPriv)
 	if err != nil {
 		t.Fatalf("create leaf cert: %v", err)
 	}
-	cert, err = x509.ParseCertificate(leafDER)
-	if err != nil {
-		t.Fatalf("parse leaf cert: %v", err)
-	}
-	return leafPriv, cert, leafDER
+	return leafPriv, leafDER
 }
 
 func EncodePEMBundle(t *testing.T, priv ed25519.PrivateKey, leafDER []byte) (keyPEM, certPEM []byte) {
@@ -130,7 +127,7 @@ func WriteCAPEMFile(t *testing.T, dir string, caPEM []byte) string {
 func SigningFixture(t *testing.T, opts LeafOptions) (pemPath, caPath string) {
 	t.Helper()
 	pki := NewPKI(t)
-	leafPriv, _, leafDER := pki.IssueLeaf(t, opts)
+	leafPriv, leafDER := pki.IssueLeaf(t, opts)
 	dir := t.TempDir()
-	return WriteCombinedPEM(t, dir, leafPriv, leafDER), WriteCAPEMFile(t, dir, pki.CACertPEM)
+	return WriteCombinedPEM(t, dir, leafPriv, leafDER), WriteCAPEMFile(t, dir, pki.CACertPEM())
 }
