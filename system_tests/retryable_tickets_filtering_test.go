@@ -15,10 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 
 	"github.com/offchainlabs/nitro/arbnode"
-	"github.com/offchainlabs/nitro/arbos"
-	"github.com/offchainlabs/nitro/arbos/arbostypes"
 	"github.com/offchainlabs/nitro/arbos/retryables"
-	"github.com/offchainlabs/nitro/cmd/chaininfo"
 	"github.com/offchainlabs/nitro/execution/gethexec/eventfilter"
 	"github.com/offchainlabs/nitro/solgen/go/bridgegen"
 	"github.com/offchainlabs/nitro/solgen/go/localgen"
@@ -1713,25 +1710,7 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 	delayedBridge, err := arbnode.NewDelayedBridge(builder.L1.Client, builder.L1Info.GetAddress("Bridge"), 0)
 	require.NoError(t, err)
 
-	lookupL2Tx := func(l1Receipt *types.Receipt) *types.Transaction {
-		messages, err := delayedBridge.LookupMessagesInRange(ctx, l1Receipt.BlockNumber, l1Receipt.BlockNumber, nil)
-		require.NoError(t, err)
-		require.NotEmpty(t, messages)
-		for _, message := range messages {
-			if message.Message.Header.Kind != arbostypes.L1MessageType_SubmitRetryable {
-				continue
-			}
-			txs, err := arbos.ParseL2Transactions(message.Message, chaininfo.ArbitrumDevTestChainConfig().ChainID, params.MaxDebugArbosVersionSupported)
-			require.NoError(t, err)
-			for _, parsedTx := range txs {
-				if parsedTx.Type() == types.ArbitrumSubmitRetryableTxType {
-					return parsedTx
-				}
-			}
-		}
-		t.Fatal("no retryable submission tx found")
-		return nil
-	}
+	lookupL2Tx := getLookupL2Tx(t, ctx, delayedBridge)
 
 	p := &retryableFilterTestParams{
 		builder:            builder,
@@ -1759,18 +1738,15 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 
 	// Core identity: should be the originating submission tx, not the redeem
 	require.Equal(t, ticketId, report.TxHash)
-	require.NotEmpty(t, report.ID)
+	requireUUIDv7(t, report.ID)
 	require.Equal(t, builder.L2Info.Signer.ChainID().Uint64(), report.ChainID)
 	require.True(t, report.IsDelayed)
 	require.NotNil(t, report.DelayedReportData, "delayed report data should be set")
-	require.NotEmpty(t, report.TxRLP, "TxRLP should be populated")
+	require.NotEqual(t, common.Hash{}, report.DelayedReportData.InboxRequestId,
+		"InboxRequestId should be populated from the delayed message header")
+	requireTxRLPRoundTrip(t, report)
 
-	// Block metadata
-	require.NotZero(t, report.BlockNumber, "block number should be set")
-	parentBlock, err := builder.L2.Client.BlockByNumber(ctx, new(big.Int).SetUint64(report.BlockNumber-1))
-	require.NoError(t, err)
-	require.Equal(t, parentBlock.Hash(), report.ParentBlockHash,
-		"parent block hash should match hash of block N-1")
+	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report)
 
 	// Filtered addresses: should contain filteredTarget (the contract the redeem called)
 	require.NotEmpty(t, report.FilteredAddresses)

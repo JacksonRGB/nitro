@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -17,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rlp"
 
 	"github.com/offchainlabs/nitro/arbnode"
 	"github.com/offchainlabs/nitro/arbos"
@@ -44,6 +46,27 @@ func CheckReportBlockNumberAndParentBlockHash(t *testing.T, ctx context.Context,
 	require.NoError(t, err)
 	require.Equal(t, parentBlock.Hash(), report.ParentBlockHash,
 		"parent block hash should match hash of block N-1")
+}
+
+func requireUUIDv7(t *testing.T, id string) {
+	t.Helper()
+	parsed, err := uuid.Parse(id)
+	require.NoError(t, err, "report.ID should be a valid UUID")
+	require.Equal(t, uuid.Version(7), parsed.Version(), "report.ID should be UUID v7")
+}
+
+func requireTxRLPRoundTrip(t *testing.T, report *addressfilter.FilteredTxReport) {
+	t.Helper()
+	require.NotEmpty(t, report.TxRLP, "TxRLP should be populated")
+	// MarshalBinary writes the raw EIP-2718 envelope (type byte + payload) but
+	// types.Transaction.UnmarshalBinary doesn't enable Arbitrum-aware parsing.
+	// Re-wrap the bytes as an RLP byte-string so DecodeRLP (which does enable it)
+	// can decode Arbitrum tx types like ArbitrumSubmitRetryableTx.
+	encoded, err := rlp.EncodeToBytes(report.TxRLP)
+	require.NoError(t, err, "wrapping TxRLP for RLP decode")
+	var parsed types.Transaction
+	require.NoError(t, rlp.DecodeBytes(encoded, &parsed), "TxRLP should decode to a transaction")
+	require.Equal(t, report.TxHash, parsed.Hash(), "round-tripped tx hash should match report.TxHash")
 }
 
 // sendDelayedTx sends a transaction via L1 delayed inbox.
@@ -311,20 +334,18 @@ func TestDelayedMessageFilterHalting(t *testing.T) {
 
 	// Core identity
 	require.Equal(t, txHash, report.TxHash)
-	require.NotEmpty(t, report.ID)
+	requireUUIDv7(t, report.ID)
 	require.Equal(t, builder.L2Info.Signer.ChainID().Uint64(), report.ChainID)
 	require.True(t, report.IsDelayed)
 	require.NotNil(t, report.DelayedReportData, "delayed report data should be set")
+	require.NotEqual(t, common.Hash{}, report.DelayedReportData.InboxRequestId,
+		"InboxRequestId should be populated from the delayed message header")
 
-	// TxRLP should be populated
-	require.NotEmpty(t, report.TxRLP, "TxRLP should be populated")
+	// TxRLP should round-trip back to a tx whose hash matches report.TxHash
+	requireTxRLPRoundTrip(t, report)
 
-	// Block metadata: block number non-zero, parent block hash matches block N-1
-	require.NotZero(t, report.BlockNumber, "block number should be set")
-	parentBlock, err := builder.L2.Client.BlockByNumber(ctx, big.NewInt(int64(report.BlockNumber-1))) // #nosec G115
-	require.NoError(t, err)
-	require.Equal(t, parentBlock.Hash(), report.ParentBlockHash,
-		"parent block hash should match hash of block N-1")
+	// Block metadata
+	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report)
 
 	// Filtered addresses: target address with reason "to" and no EventRuleMatch
 	require.NotEmpty(t, report.FilteredAddresses)
@@ -2747,16 +2768,14 @@ func TestDelayedMessageFilterCatchesEventFilterReport(t *testing.T) {
 	report := reportAPI.NextReport(t)
 
 	require.Equal(t, txHash, report.TxHash)
+	requireUUIDv7(t, report.ID)
 	require.Equal(t, builder.L2Info.Signer.ChainID().Uint64(), report.ChainID)
 	require.True(t, report.IsDelayed)
 	require.NotNil(t, report.DelayedReportData)
-	require.NotEmpty(t, report.TxRLP)
-	require.NotZero(t, report.BlockNumber)
-
-	parentBlock, err := builder.L2.Client.BlockByNumber(ctx, big.NewInt(int64(report.BlockNumber-1))) // #nosec G115
-	require.NoError(t, err)
-	require.Equal(t, parentBlock.Hash(), report.ParentBlockHash,
-		"parent block hash should match hash of block N-1")
+	require.NotEqual(t, common.Hash{}, report.DelayedReportData.InboxRequestId,
+		"InboxRequestId should be populated from the delayed message header")
+	requireTxRLPRoundTrip(t, report)
+	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report)
 
 	// Find the event-rule-triggered filtered address
 	foundEventRule := false
