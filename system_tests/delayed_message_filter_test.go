@@ -6,8 +6,6 @@ package arbtest
 import (
 	"context"
 	"math/big"
-	"slices"
-	"sync"
 	"testing"
 	"time"
 
@@ -18,10 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/node"
-	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/rpc"
 
 	"github.com/offchainlabs/nitro/arbnode"
 	"github.com/offchainlabs/nitro/arbos"
@@ -33,8 +28,6 @@ import (
 	filteringreportapi "github.com/offchainlabs/nitro/cmd/filtering-report/api"
 	"github.com/offchainlabs/nitro/cmd/filtering-report/forwarder"
 	"github.com/offchainlabs/nitro/cmd/transaction-filterer/api"
-	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
-	"github.com/offchainlabs/nitro/execution/gethexec"
 	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
 	"github.com/offchainlabs/nitro/execution/gethexec/eventfilter"
 	"github.com/offchainlabs/nitro/solgen/go/bridgegen"
@@ -278,7 +271,7 @@ func TestDelayedMessageFilterHalting(t *testing.T) {
 	defer cancel()
 
 	builder := setupFilteredTxTestBuilder(t, ctx)
-	reportAPI := createFilteringReportService(t, builder)
+	reportAPI := SetupFilteringReport(t, builder)
 	cleanup := builder.Build(t)
 	defer cleanup()
 
@@ -314,17 +307,12 @@ func TestDelayedMessageFilterHalting(t *testing.T) {
 	require.Equal(t, initialBalance, finalBalance, "filtered address balance should not change")
 
 	// Verify filtering-report service received the report
-	require.Eventually(t, func() bool {
-		return len(reportAPI.ReceivedReports()) > 0
-	}, 5*time.Second, 100*time.Millisecond, "filtering-report should receive reports")
-
-	reports := reportAPI.ReceivedReports()
-	require.Len(t, reports, 1)
-	report := reports[0]
+	report := reportAPI.NextReport(t)
 
 	// Core identity
 	require.Equal(t, txHash, report.TxHash)
 	require.NotEmpty(t, report.ID)
+	require.Equal(t, builder.L2Info.Signer.ChainID().Uint64(), report.ChainID)
 	require.True(t, report.IsDelayed)
 	require.NotNil(t, report.DelayedReportData, "delayed report data should be set")
 
@@ -2730,7 +2718,7 @@ func TestDelayedMessageFilterCatchesEventFilterReport(t *testing.T) {
 	builder.nodeConfig.DelayedSequencer.Enable = true
 	builder.nodeConfig.DelayedSequencer.FinalizeDistance = 1
 
-	reportAPI := createFilteringReportService(t, builder)
+	reportAPI := SetupFilteringReport(t, builder)
 	cleanup := builder.Build(t)
 	defer cleanup()
 
@@ -2756,15 +2744,10 @@ func TestDelayedMessageFilterCatchesEventFilterReport(t *testing.T) {
 	waitForDelayedSequencerHaltOnHashes(t, ctx, builder, []common.Hash{txHash}, 10*time.Second)
 
 	// Verify report
-	require.Eventually(t, func() bool {
-		return len(reportAPI.ReceivedReports()) > 0
-	}, 5*time.Second, 100*time.Millisecond, "filtering-report should receive reports")
-
-	reports := reportAPI.ReceivedReports()
-	require.Len(t, reports, 1)
-	report := reports[0]
+	report := reportAPI.NextReport(t)
 
 	require.Equal(t, txHash, report.TxHash)
+	require.Equal(t, builder.L2Info.Signer.ChainID().Uint64(), report.ChainID)
 	require.True(t, report.IsDelayed)
 	require.NotNil(t, report.DelayedReportData)
 	require.NotEmpty(t, report.TxRLP)

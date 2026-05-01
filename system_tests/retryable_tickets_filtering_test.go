@@ -1673,7 +1673,7 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 
 	// Setup builder with report mock BEFORE Build
 	builder := setupFilteredTxTestBuilder(t, ctx)
-	reportAPI := createFilteringReportService(t, builder)
+	reportAPI := SetupFilteringReport(t, builder)
 	cleanup := builder.Build(t)
 	defer cleanup()
 
@@ -1755,17 +1755,12 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 	waitForDelayedSequencerHaltOnHashes(t, ctx, builder, []common.Hash{ticketId}, 10*time.Second)
 
 	// Verify report from the TxFailed/cascading redeem path
-	require.Eventually(t, func() bool {
-		return len(reportAPI.ReceivedReports()) > 0
-	}, 5*time.Second, 100*time.Millisecond, "filtering-report should receive cascading redeem report")
-
-	reports := reportAPI.ReceivedReports()
-	require.Len(t, reports, 1)
-	report := reports[0]
+	report := reportAPI.NextReport(t)
 
 	// Core identity: should be the originating submission tx, not the redeem
 	require.Equal(t, ticketId, report.TxHash)
 	require.NotEmpty(t, report.ID)
+	require.Equal(t, builder.L2Info.Signer.ChainID().Uint64(), report.ChainID)
 	require.True(t, report.IsDelayed)
 	require.NotNil(t, report.DelayedReportData, "delayed report data should be set")
 	require.NotEmpty(t, report.TxRLP, "TxRLP should be populated")

@@ -104,13 +104,15 @@ type DelayedFilteringSequencingHooks struct {
 	pendingFilteredTxReports []addressfilter.FilteredTxReport
 	eventFilter              *eventfilter.EventFilter
 	inboxRequestId           common.Hash
+	chainID                  uint64
 }
 
-func NewDelayedFilteringSequencingHooks(txes types.Transactions, ef *eventfilter.EventFilter, inboxRequestId common.Hash) *DelayedFilteringSequencingHooks {
+func NewDelayedFilteringSequencingHooks(txes types.Transactions, ef *eventfilter.EventFilter, inboxRequestId common.Hash, chainID uint64) *DelayedFilteringSequencingHooks {
 	return &DelayedFilteringSequencingHooks{
 		NoopSequencingHooks: *arbos.NewNoopSequencingHooks(txes),
 		eventFilter:         ef,
 		inboxRequestId:      inboxRequestId,
+		chainID:             chainID,
 	}
 }
 
@@ -165,6 +167,7 @@ func (f *DelayedFilteringSequencingHooks) PostTxFilter(header *types.Header, db 
 				TxHash:            tx.Hash(),
 				TxRLP:             txRLP,
 				FilteredAddresses: filteredAddresses,
+				ChainID:           f.chainID,
 				BlockNumber:       header.Number.Uint64(),
 				ParentBlockHash:   header.ParentHash,
 				PositionInBlock:   uint64(positionInBlock), // #nosec G115
@@ -203,6 +206,7 @@ func (f *DelayedFilteringSequencingHooks) TxFailed(err error) {
 		TxHash:            originatingTxHash,
 		TxRLP:             txRLP,
 		FilteredAddresses: cascadingErr.FilteredAddresses,
+		ChainID:           f.chainID,
 		BlockNumber:       cascadingErr.BlockNumber,
 		ParentBlockHash:   cascadingErr.ParentBlockHash,
 		PositionInBlock:   uint64(cascadingErr.PositionInBlock), // #nosec G115
@@ -983,7 +987,7 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 		if msg.Message.Header.RequestId != nil {
 			inboxRequestId = *msg.Message.Header.RequestId
 		}
-		filteringHooks := NewDelayedFilteringSequencingHooks(txes, s.eventFilter, inboxRequestId)
+		filteringHooks := NewDelayedFilteringSequencingHooks(txes, s.eventFilter, inboxRequestId, chainConfig.ChainID.Uint64())
 
 		block, statedb, receipts, err := arbos.ProduceBlockAdvanced(
 			msg.Message.Header,
