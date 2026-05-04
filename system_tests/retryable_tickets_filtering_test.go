@@ -1743,11 +1743,7 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 	// Core identity: should be the originating submission tx, not the redeem
 	CheckCommonReportFields(t, ctx, builder, report, nil)
 	require.Equal(t, ticketId, report.TxHash)
-	require.True(t, report.IsDelayed)
-	require.NotNil(t, report.DelayedReportData, "delayed report data should be set")
-	expectedRequestId := common.BigToHash(big.NewInt(int64(delayedCountBefore))) // #nosec G115
-	require.Equal(t, expectedRequestId, report.DelayedReportData.InboxRequestId,
-		"InboxRequestId should match the delayed message index")
+	checkDelayedReportFields(t, report, delayedCountBefore)
 
 	// Filtered addresses: should contain filteredTarget (the contract the redeem called)
 	require.NotEmpty(t, report.FilteredAddresses)

@@ -75,6 +75,16 @@ func CheckCommonReportFields(t *testing.T, ctx context.Context, builder *NodeBui
 	require.Equal(t, parentBlock.Hash(), report.ParentBlockHash, "parent block hash should match hash of block N-1")
 }
 
+// checkDelayedReportFields asserts FilteredTxReport fields specific to delayed messages.
+func checkDelayedReportFields(t *testing.T, report *addressfilter.FilteredTxReport, delayedCountBefore uint64) {
+	t.Helper()
+	require.True(t, report.IsDelayed)
+	require.NotNil(t, report.DelayedReportData, "delayed report data should be set")
+	expectedRequestId := common.BigToHash(big.NewInt(int64(delayedCountBefore))) // #nosec G115
+	require.Equal(t, expectedRequestId, report.DelayedReportData.InboxRequestId,
+		"InboxRequestId should match the delayed message index")
+}
+
 // sendDelayedTx sends a transaction via L1 delayed inbox.
 // Returns the L2 tx hash that will be used when sequenced.
 func sendDelayedTx(t *testing.T, ctx context.Context, builder *NodeBuilder, tx *types.Transaction) common.Hash {
@@ -342,11 +352,7 @@ func TestDelayedMessageFilterHalting(t *testing.T) {
 	// Verify filtering-report service received the report
 	report := reportAPI.NextReport(t)
 	CheckCommonReportFields(t, ctx, builder, report, delayedTx)
-	require.True(t, report.IsDelayed)
-	require.NotNil(t, report.DelayedReportData, "delayed report data should be set")
-	expectedRequestId := common.BigToHash(big.NewInt(int64(delayedCountBefore))) // #nosec G115
-	require.Equal(t, expectedRequestId, report.DelayedReportData.InboxRequestId,
-		"InboxRequestId should match the delayed message index")
+	checkDelayedReportFields(t, report, delayedCountBefore)
 
 	// Filtered addresses: target address with reason "to" and no EventRuleMatch
 	require.NotEmpty(t, report.FilteredAddresses)
@@ -2710,11 +2716,7 @@ func TestDelayedMessageFilterCatchesEventFilter(t *testing.T) {
 	// Verify filtering report
 	report := reportAPI.NextReport(t)
 	CheckCommonReportFields(t, ctx, builder, report, delayedTx)
-	require.True(t, report.IsDelayed)
-	require.NotNil(t, report.DelayedReportData)
-	expectedRequestId := common.BigToHash(big.NewInt(int64(delayedCountBefore))) // #nosec G115
-	require.Equal(t, expectedRequestId, report.DelayedReportData.InboxRequestId,
-		"InboxRequestId should match the delayed message index")
+	checkDelayedReportFields(t, report, delayedCountBefore)
 
 	foundEventRule := false
 	for _, addr := range report.FilteredAddresses {
