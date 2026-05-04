@@ -1670,7 +1670,8 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 
 	// Setup builder with report mock BEFORE Build
 	builder := setupFilteredTxTestBuilder(t, ctx)
-	reportAPI := SetupFilteringReport(t, builder)
+	filteringReportStack, reportAPI := SetupFilteringReport(t)
+	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = filteringReportStack.HTTPEndpoint()
 	cleanup := builder.Build(t)
 	defer cleanup()
 
@@ -1737,16 +1738,12 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 	report := reportAPI.NextReport(t)
 
 	// Core identity: should be the originating submission tx, not the redeem
+	CheckCommonReportFields(t, ctx, builder, report, nil)
 	require.Equal(t, ticketId, report.TxHash)
-	requireUUIDv7(t, report.ID)
-	require.Equal(t, builder.L2Info.Signer.ChainID().Uint64(), report.ChainID)
 	require.True(t, report.IsDelayed)
 	require.NotNil(t, report.DelayedReportData, "delayed report data should be set")
 	require.NotEqual(t, common.Hash{}, report.DelayedReportData.InboxRequestId,
 		"InboxRequestId should be populated from the delayed message header")
-	requireTxRLPRoundTrip(t, report)
-
-	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report)
 
 	// Filtered addresses: should contain filteredTarget (the contract the redeem called)
 	require.NotEmpty(t, report.FilteredAddresses)

@@ -55,8 +55,14 @@ func CheckCommonReportFields(t *testing.T, ctx context.Context, builder *NodeBui
 	require.False(t, report.FilteredAt.IsZero(), "filteredAt must be populated")
 	require.WithinDuration(t, time.Now().UTC(), report.FilteredAt, 5*time.Minute, "filteredAt must be recent")
 
+	// MarshalBinary writes the raw EIP-2718 envelope (type byte + payload) but
+	// types.Transaction.UnmarshalBinary doesn't enable Arbitrum-aware parsing.
+	// Re-wrap the bytes as an RLP byte-string so DecodeRLP (which does enable it)
+	// can decode Arbitrum tx types like ArbitrumSubmitRetryableTx.
+	encoded, err := rlp.EncodeToBytes(report.TxRLP)
+	require.NoError(t, err, "wrapping TxRLP for RLP decode")
 	var decoded types.Transaction
-	require.NoError(t, decoded.UnmarshalBinary(report.TxRLP), "txRLP should decode")
+	require.NoError(t, rlp.DecodeBytes(encoded, &decoded), "TxRLP should decode to a transaction")
 	require.Equal(t, decoded.Hash(), report.TxHash, "decoded txRLP hash should match txHash field")
 
 	if tx != nil {
@@ -67,27 +73,6 @@ func CheckCommonReportFields(t *testing.T, ctx context.Context, builder *NodeBui
 	parentBlock, err := builder.L2.Client.BlockByNumber(ctx, big.NewInt(int64(report.BlockNumber-1))) // #nosec G115
 	require.NoError(t, err)
 	require.Equal(t, parentBlock.Hash(), report.ParentBlockHash, "parent block hash should match hash of block N-1")
-}
-
-func requireUUIDv7(t *testing.T, id string) {
-	t.Helper()
-	parsed, err := uuid.Parse(id)
-	require.NoError(t, err, "report.ID should be a valid UUID")
-	require.Equal(t, uuid.Version(7), parsed.Version(), "report.ID should be UUID v7")
-}
-
-func requireTxRLPRoundTrip(t *testing.T, report *addressfilter.FilteredTxReport) {
-	t.Helper()
-	require.NotEmpty(t, report.TxRLP, "TxRLP should be populated")
-	// MarshalBinary writes the raw EIP-2718 envelope (type byte + payload) but
-	// types.Transaction.UnmarshalBinary doesn't enable Arbitrum-aware parsing.
-	// Re-wrap the bytes as an RLP byte-string so DecodeRLP (which does enable it)
-	// can decode Arbitrum tx types like ArbitrumSubmitRetryableTx.
-	encoded, err := rlp.EncodeToBytes(report.TxRLP)
-	require.NoError(t, err, "wrapping TxRLP for RLP decode")
-	var parsed types.Transaction
-	require.NoError(t, rlp.DecodeBytes(encoded, &parsed), "TxRLP should decode to a transaction")
-	require.Equal(t, report.TxHash, parsed.Hash(), "round-tripped tx hash should match report.TxHash")
 }
 
 // sendDelayedTx sends a transaction via L1 delayed inbox.
@@ -314,7 +299,8 @@ func TestDelayedMessageFilterHalting(t *testing.T) {
 	defer cancel()
 
 	builder := setupFilteredTxTestBuilder(t, ctx)
-	reportAPI := SetupFilteringReport(t, builder)
+	filteringReportStack, reportAPI := SetupFilteringReport(t)
+	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = filteringReportStack.HTTPEndpoint()
 	cleanup := builder.Build(t)
 	defer cleanup()
 
@@ -351,21 +337,11 @@ func TestDelayedMessageFilterHalting(t *testing.T) {
 
 	// Verify filtering-report service received the report
 	report := reportAPI.NextReport(t)
-
-	// Core identity
-	require.Equal(t, txHash, report.TxHash)
-	requireUUIDv7(t, report.ID)
-	require.Equal(t, builder.L2Info.Signer.ChainID().Uint64(), report.ChainID)
+	CheckCommonReportFields(t, ctx, builder, report, delayedTx)
 	require.True(t, report.IsDelayed)
 	require.NotNil(t, report.DelayedReportData, "delayed report data should be set")
 	require.NotEqual(t, common.Hash{}, report.DelayedReportData.InboxRequestId,
 		"InboxRequestId should be populated from the delayed message header")
-
-	// TxRLP should round-trip back to a tx whose hash matches report.TxHash
-	requireTxRLPRoundTrip(t, report)
-
-	// Block metadata
-	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report)
 
 	// Filtered addresses: target address with reason "to" and no EventRuleMatch
 	require.NotEmpty(t, report.FilteredAddresses)
@@ -2759,7 +2735,8 @@ func TestDelayedMessageFilterCatchesEventFilterReport(t *testing.T) {
 	builder.nodeConfig.DelayedSequencer.Enable = true
 	builder.nodeConfig.DelayedSequencer.FinalizeDistance = 1
 
-	reportAPI := SetupFilteringReport(t, builder)
+	filteringReportStack, reportAPI := SetupFilteringReport(t)
+	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = filteringReportStack.HTTPEndpoint()
 	cleanup := builder.Build(t)
 	defer cleanup()
 
@@ -2786,16 +2763,11 @@ func TestDelayedMessageFilterCatchesEventFilterReport(t *testing.T) {
 
 	// Verify report
 	report := reportAPI.NextReport(t)
-
-	require.Equal(t, txHash, report.TxHash)
-	requireUUIDv7(t, report.ID)
-	require.Equal(t, builder.L2Info.Signer.ChainID().Uint64(), report.ChainID)
+	CheckCommonReportFields(t, ctx, builder, report, delayedTx)
 	require.True(t, report.IsDelayed)
 	require.NotNil(t, report.DelayedReportData)
 	require.NotEqual(t, common.Hash{}, report.DelayedReportData.InboxRequestId,
 		"InboxRequestId should be populated from the delayed message header")
-	requireTxRLPRoundTrip(t, report)
-	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report)
 
 	// Find the event-rule-triggered filtered address
 	foundEventRule := false
