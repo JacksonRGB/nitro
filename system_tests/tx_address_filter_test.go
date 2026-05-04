@@ -14,7 +14,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/arbitrum/filter"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/offchainlabs/nitro/execution"
@@ -49,33 +48,16 @@ func newHashedChecker(addrs []common.Address) *addressfilter.HashedAddressChecke
 	return checker
 }
 
-// assertReportTxRLPMatches decodes report.TxRLP and asserts it parses to a
-// transaction whose hash matches report.TxHash.
-func assertReportTxRLPMatches(t *testing.T, report *addressfilter.FilteredTxReport) {
-	t.Helper()
-	var decoded types.Transaction
-	if err := decoded.UnmarshalBinary(report.TxRLP); err != nil {
-		t.Fatalf("report.TxRLP is not a valid transaction: %v", err)
-	}
-	if decoded.Hash() != report.TxHash {
-		t.Fatalf("decoded tx hash %s != report.TxHash %s", decoded.Hash().Hex(), report.TxHash.Hex())
-	}
-}
-
 func TestAddressFilterDirectTransfer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
 	builder.isSequencer = true
-	endpoint := SetupFilteringReport(t, builder)
+	filteringReportStack, endpoint := SetupFilteringReport(t)
+	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = filteringReportStack.HTTPEndpoint()
 	cleanup := builder.Build(t)
 	defer cleanup()
-
-	chainID, err := builder.L2.Client.ChainID(ctx)
-	Require(t, err)
-
-	testStartTime := time.Now()
 
 	// Create accounts
 	builder.L2Info.GenerateAccount("FilteredUser")
@@ -92,7 +74,7 @@ func TestAddressFilterDirectTransfer(t *testing.T) {
 
 	// Test 1: Transaction TO a filtered address should fail and produce a report
 	tx := builder.L2Info.PrepareTx("NormalUser", "FilteredUser", builder.L2Info.TransferGas, big.NewInt(1e12), nil)
-	err = builder.L2.Client.SendTransaction(ctx, tx)
+	err := builder.L2.Client.SendTransaction(ctx, tx)
 	if err == nil {
 		t.Fatal("expected transaction to filtered address to be rejected")
 	}
@@ -100,26 +82,10 @@ func TestAddressFilterDirectTransfer(t *testing.T) {
 		t.Fatalf("expected filtered error, got: %v", err)
 	}
 	report := endpoint.NextReport(t)
-	if report.TxHash != tx.Hash() {
-		t.Fatalf("report TxHash %s != tx hash %s", report.TxHash.Hex(), tx.Hash().Hex())
-	}
-	if report.ID == "" {
-		t.Fatal("report ID should not be empty")
-	}
-	if len(report.TxRLP) == 0 {
-		t.Fatal("report TxRLP should not be empty")
-	}
-	assertReportTxRLPMatches(t, report)
-	if report.ChainID != chainID.Uint64() {
-		t.Fatalf("report ChainID %d != expected %d", report.ChainID, chainID.Uint64())
-	}
+	CheckCommonReportFields(t, ctx, builder, report, tx)
 	if report.IsDelayed {
 		t.Fatal("report should not be marked as delayed")
 	}
-	if report.FilteredAt.Before(testStartTime) {
-		t.Fatalf("report FilteredAt %v is before test start %v", report.FilteredAt, testStartTime)
-	}
-	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report)
 	foundToReason := false
 	for _, fa := range report.FilteredAddresses {
 		if fa.Address == filteredAddr {
@@ -136,6 +102,7 @@ func TestAddressFilterDirectTransfer(t *testing.T) {
 	if !foundToReason {
 		t.Fatalf("report should contain filtered address %s with ReasonTo", filteredAddr.Hex())
 	}
+
 	// Reset nonce since tx was rejected
 	builder.L2Info.GetInfoWithPrivKey("NormalUser").Nonce.Store(0)
 
@@ -148,27 +115,12 @@ func TestAddressFilterDirectTransfer(t *testing.T) {
 	if !isFilteredError(err) {
 		t.Fatalf("expected filtered error, got: %v", err)
 	}
+
 	report2 := endpoint.NextReport(t)
-	if report2.TxHash != tx.Hash() {
-		t.Fatalf("report2 TxHash %s != tx hash %s", report2.TxHash.Hex(), tx.Hash().Hex())
-	}
-	if report2.ID == "" {
-		t.Fatal("report2 ID should not be empty")
-	}
-	if len(report2.TxRLP) == 0 {
-		t.Fatal("report2 TxRLP should not be empty")
-	}
-	assertReportTxRLPMatches(t, report2)
-	if report2.ChainID != chainID.Uint64() {
-		t.Fatalf("report2 ChainID %d != expected %d", report2.ChainID, chainID.Uint64())
-	}
+	CheckCommonReportFields(t, ctx, builder, report2, tx)
 	if report2.IsDelayed {
 		t.Fatal("report2 should not be marked as delayed")
 	}
-	if report2.FilteredAt.Before(testStartTime) {
-		t.Fatalf("report2 FilteredAt %v is before test start %v", report2.FilteredAt, testStartTime)
-	}
-	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report2)
 	foundFromReason := false
 	for _, fa := range report2.FilteredAddresses {
 		if fa.Address == filteredAddr {
@@ -216,14 +168,10 @@ func TestAddressFilterEventRuleReport(t *testing.T) {
 
 	builder := NewNodeBuilder(ctx).DefaultConfig(t, false).WithEventFilterRules(rules)
 	builder.isSequencer = true
-	endpoint := SetupFilteringReport(t, builder)
+	filteringReportStack, endpoint := SetupFilteringReport(t)
+	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = filteringReportStack.HTTPEndpoint()
 	cleanup := builder.Build(t)
 	defer cleanup()
-
-	chainID, err := builder.L2.Client.ChainID(ctx)
-	Require(t, err)
-
-	testStartTime := time.Now()
 
 	// Deploy test contract
 	_, contract := deployAddressFilterTestContract(t, ctx, builder)
@@ -237,7 +185,7 @@ func TestAddressFilterEventRuleReport(t *testing.T) {
 	// Emit Transfer event with filtered address as recipient (topic[2])
 	// This triggers postTxFilter via the event filter path
 	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
-	_, err = contract.EmitTransfer(&auth, auth.From, filteredAddr)
+	tx, err := contract.EmitTransfer(&auth, auth.From, filteredAddr)
 	if err == nil {
 		t.Fatal("expected EmitTransfer to filtered beneficiary to be rejected")
 	}
@@ -246,24 +194,10 @@ func TestAddressFilterEventRuleReport(t *testing.T) {
 	}
 
 	report := endpoint.NextReport(t)
-	if report.ID == "" {
-		t.Fatal("report ID should not be empty")
-	}
-	if len(report.TxRLP) == 0 {
-		t.Fatal("report TxRLP should not be empty")
-	}
-	assertReportTxRLPMatches(t, report)
-	if report.ChainID != chainID.Uint64() {
-		t.Fatalf("report ChainID %d != expected %d", report.ChainID, chainID.Uint64())
-	}
+	CheckCommonReportFields(t, ctx, builder, report, tx)
 	if report.IsDelayed {
 		t.Fatal("report should not be marked as delayed")
 	}
-	if report.FilteredAt.Before(testStartTime) {
-		t.Fatalf("report FilteredAt %v is before test start %v", report.FilteredAt, testStartTime)
-	}
-	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report)
-
 	// Verify that the report contains the filtered address with an EventRuleMatch
 	foundEventRule := false
 	for _, fa := range report.FilteredAddresses {
@@ -292,14 +226,10 @@ func TestAddressFilterPostTxFilterReport(t *testing.T) {
 
 	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
 	builder.isSequencer = true
-	endpoint := SetupFilteringReport(t, builder)
+	filteringReportStack, endpoint := SetupFilteringReport(t)
+	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = filteringReportStack.HTTPEndpoint()
 	cleanup := builder.Build(t)
 	defer cleanup()
-
-	chainID, err := builder.L2.Client.ChainID(ctx)
-	Require(t, err)
-
-	testStartTime := time.Now()
 
 	// Deploy two contracts: a caller (not filtered) and a target (will be filtered)
 	_, caller := deployAddressFilterTestContract(t, ctx, builder)
@@ -312,7 +242,7 @@ func TestAddressFilterPostTxFilterReport(t *testing.T) {
 	// CALL to filtered target triggers postTxFilter (the target address is reached
 	// via the CALL opcode during execution, not from the tx's To field)
 	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
-	_, err = caller.CallTarget(&auth, targetAddr)
+	tx, err := caller.CallTarget(&auth, targetAddr)
 	if err == nil {
 		t.Fatal("expected CALL to filtered address to be rejected")
 	}
@@ -321,27 +251,10 @@ func TestAddressFilterPostTxFilterReport(t *testing.T) {
 	}
 
 	report := endpoint.NextReport(t)
-	if report.ID == "" {
-		t.Fatal("report ID should not be empty")
-	}
-	if report.TxHash == (common.Hash{}) {
-		t.Fatal("report TxHash should not be zero")
-	}
-	if len(report.TxRLP) == 0 {
-		t.Fatal("report TxRLP should not be empty")
-	}
-	assertReportTxRLPMatches(t, report)
-	if report.ChainID != chainID.Uint64() {
-		t.Fatalf("report ChainID %d != expected %d", report.ChainID, chainID.Uint64())
-	}
+	CheckCommonReportFields(t, ctx, builder, report, tx)
 	if report.IsDelayed {
 		t.Fatal("report should not be marked as delayed")
 	}
-	if report.FilteredAt.Before(testStartTime) {
-		t.Fatalf("report FilteredAt %v is before test start %v", report.FilteredAt, testStartTime)
-	}
-	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report)
-
 	// Verify filtered address is present with correct reason and no EventRuleMatch
 	foundTarget := false
 	for _, fa := range report.FilteredAddresses {
@@ -360,7 +273,7 @@ func TestAddressFilterPostTxFilterReport(t *testing.T) {
 	// Verify no spurious report for a clean CALL to a non-filtered target
 	cleanTargetAddr, _ := deployAddressFilterTestContract(t, ctx, builder)
 	auth = builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
-	tx, err := caller.CallTarget(&auth, cleanTargetAddr)
+	tx, err = caller.CallTarget(&auth, cleanTargetAddr)
 	Require(t, err)
 	_, err = builder.L2.EnsureTxSucceeded(tx)
 	Require(t, err)
