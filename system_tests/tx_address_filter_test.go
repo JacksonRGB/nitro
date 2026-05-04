@@ -220,67 +220,6 @@ func TestAddressFilterEventRuleReport(t *testing.T) {
 	}
 }
 
-func TestAddressFilterPostTxFilterReport(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
-	builder.isSequencer = true
-	filteringReportStack, endpoint := SetupFilteringReport(t)
-	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = filteringReportStack.HTTPEndpoint()
-	cleanup := builder.Build(t)
-	defer cleanup()
-
-	// Deploy two contracts: a caller (not filtered) and a target (will be filtered)
-	_, caller := deployAddressFilterTestContract(t, ctx, builder)
-	targetAddr, _ := deployAddressFilterTestContract(t, ctx, builder)
-
-	// Set up filter to block the target contract address
-	addrFilter := newHashedChecker([]common.Address{targetAddr})
-	builder.L2.ExecNode.ExecEngine.SetAddressChecker(t, addrFilter)
-
-	// CALL to filtered target triggers postTxFilter (the target address is reached
-	// via the CALL opcode during execution, not from the tx's To field)
-	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
-	tx, err := caller.CallTarget(&auth, targetAddr)
-	if err == nil {
-		t.Fatal("expected CALL to filtered address to be rejected")
-	}
-	if !isFilteredError(err) {
-		t.Fatalf("expected filtered error, got: %v", err)
-	}
-
-	report := endpoint.NextReport(t)
-	CheckCommonReportFields(t, ctx, builder, report, tx)
-	if report.IsDelayed {
-		t.Fatal("report should not be marked as delayed")
-	}
-	// Verify filtered address is present with correct reason and no EventRuleMatch
-	foundTarget := false
-	for _, fa := range report.FilteredAddresses {
-		if fa.Address == targetAddr {
-			if fa.FilterReason.EventRuleMatch != nil {
-				t.Fatal("expected nil EventRuleMatch for direct address filter via CALL")
-			}
-			foundTarget = true
-			break
-		}
-	}
-	if !foundTarget {
-		t.Fatalf("report should contain filtered target address %s", targetAddr.Hex())
-	}
-
-	// Verify no spurious report for a clean CALL to a non-filtered target
-	cleanTargetAddr, _ := deployAddressFilterTestContract(t, ctx, builder)
-	auth = builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
-	tx, err = caller.CallTarget(&auth, cleanTargetAddr)
-	Require(t, err)
-	_, err = builder.L2.EnsureTxSucceeded(tx)
-	Require(t, err)
-
-	endpoint.AssertNoReport(t, 500*time.Millisecond)
-}
-
 func deployAddressFilterTestContract(t *testing.T, ctx context.Context, builder *NodeBuilder) (common.Address, *localgen.AddressFilterTest) {
 	t.Helper()
 	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
@@ -297,6 +236,8 @@ func TestAddressFilterCall(t *testing.T) {
 
 	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
 	builder.isSequencer = true
+	filteringReportStack, endpoint := SetupFilteringReport(t)
+	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = filteringReportStack.HTTPEndpoint()
 	cleanup := builder.Build(t)
 	defer cleanup()
 
@@ -312,7 +253,7 @@ func TestAddressFilterCall(t *testing.T) {
 
 	// Test: CALL to filtered address should fail
 	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
-	_, err := caller.CallTarget(&auth, targetAddr)
+	tx, err := caller.CallTarget(&auth, targetAddr)
 	if err == nil {
 		t.Fatal("expected CALL to filtered address to be rejected")
 	}
@@ -320,13 +261,34 @@ func TestAddressFilterCall(t *testing.T) {
 		t.Fatalf("expected filtered error, got: %v", err)
 	}
 
+	report := endpoint.NextReport(t)
+	CheckCommonReportFields(t, ctx, builder, report, tx)
+	if report.IsDelayed {
+		t.Fatal("report should not be marked as delayed")
+	}
+	foundTarget := false
+	for _, fa := range report.FilteredAddresses {
+		if fa.Address == targetAddr {
+			if fa.FilterReason.EventRuleMatch != nil {
+				t.Fatal("expected nil EventRuleMatch for direct address filter via CALL")
+			}
+			foundTarget = true
+			break
+		}
+	}
+	if !foundTarget {
+		t.Fatalf("report should contain filtered target address %s", targetAddr.Hex())
+	}
+
 	// Deploy another target (not filtered) - should succeed
 	cleanTargetAddr, _ := deployAddressFilterTestContract(t, ctx, builder)
 	auth = builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
-	tx, err := caller.CallTarget(&auth, cleanTargetAddr)
+	tx, err = caller.CallTarget(&auth, cleanTargetAddr)
 	Require(t, err)
 	_, err = builder.L2.EnsureTxSucceeded(tx)
 	Require(t, err)
+
+	endpoint.AssertNoReport(t, 500*time.Millisecond)
 }
 
 func TestAddressFilterStaticCall(t *testing.T) {
