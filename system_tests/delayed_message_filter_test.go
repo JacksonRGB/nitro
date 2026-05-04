@@ -2712,7 +2712,24 @@ func TestDelayedMessageFilterCatchesEventFilter(t *testing.T) {
 		if addr.Address == filteredAddr && addr.Reason == filterTypes.ReasonEventRule {
 			require.NotNil(t, addr.EventRuleMatch, "event rule match should be populated")
 			require.Equal(t, "Transfer(address,address,uint256)", addr.EventRuleMatch.MatchedEvent)
+			require.Equal(t, 2, addr.EventRuleMatch.MatchedTopicIndex,
+				"filteredAddr is in topic index 2 (the 'to' parameter)")
 			require.NotNil(t, addr.EventRuleMatch.RawLog, "raw log should be populated")
+
+			rawLog := addr.EventRuleMatch.RawLog
+			require.Equal(t, contractAddr, rawLog.Address,
+				"raw log emitter should be the contract")
+			require.Len(t, rawLog.Topics, 3, "Transfer has selector + 2 indexed params")
+			require.Equal(t, crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)")), rawLog.Topics[0],
+				"first topic should be Transfer event selector")
+			require.Equal(t, common.BytesToHash(senderAddr.Bytes()), rawLog.Topics[1],
+				"second topic should be sender (from)")
+			require.Equal(t, common.BytesToHash(filteredAddr.Bytes()), rawLog.Topics[2],
+				"third topic should be filtered target (to)")
+			expectedData := common.BigToHash(big.NewInt(1))
+			require.Equal(t, expectedData.Bytes(), []byte(rawLog.Data),
+				"data should be ABI-encoded uint256(1)")
+
 			foundEventRule = true
 			break
 		}
