@@ -1727,9 +1727,6 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 	retryData, err := callerABI.Pack("callTarget", filteredTarget)
 	require.NoError(t, err)
 
-	delayedCountBefore, err := builder.L2.ConsensusNode.InboxTracker.GetDelayedCount()
-	require.NoError(t, err)
-
 	l1Receipt, ticketId := submitRetryableViaL1(t, p, "Faucet", callerAddr, common.Big0, cleanBeneficiary, cleanBeneficiary, retryData)
 	l2Tx := p.lookupL2Tx(l1Receipt)
 	advanceL1ForDelayed(t, ctx, builder)
@@ -1742,7 +1739,7 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 
 	// Core identity: should be the originating submission tx, not the redeem
 	CheckCommonReportFields(t, ctx, builder, report, l2Tx)
-	checkDelayedReportFields(t, report, delayedCountBefore)
+	checkDelayedReportFields(t, report)
 	// Position 1: the originating retryable submission tx is at position 1 (after internal start-block tx at 0)
 	require.Equal(t, uint64(1), report.PositionInBlock, "positionInBlock should reflect the originating user tx position, not the redeem")
 

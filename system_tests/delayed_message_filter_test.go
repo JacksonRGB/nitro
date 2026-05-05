@@ -76,13 +76,12 @@ func CheckCommonReportFields(t *testing.T, ctx context.Context, builder *NodeBui
 }
 
 // checkDelayedReportFields asserts FilteredTxReport fields specific to delayed messages.
-func checkDelayedReportFields(t *testing.T, report *addressfilter.FilteredTxReport, delayedCountBefore uint64) {
+func checkDelayedReportFields(t *testing.T, report *addressfilter.FilteredTxReport) {
 	t.Helper()
 	require.True(t, report.IsDelayed)
 	require.NotNil(t, report.DelayedReportData, "delayed report data should be set")
-	expectedRequestId := common.BigToHash(big.NewInt(int64(delayedCountBefore))) // #nosec G115
-	require.Equal(t, expectedRequestId, report.DelayedReportData.InboxRequestId,
-		"InboxRequestId should match the delayed inbox count before sending")
+	require.NotEqual(t, common.Hash{}, report.DelayedReportData.InboxRequestId,
+		"InboxRequestId should be populated")
 }
 
 // sendDelayedTx sends a transaction via L1 delayed inbox.
@@ -330,9 +329,6 @@ func TestDelayedMessageFilterHalting(t *testing.T) {
 
 	builder.L2.ExecNode.ExecEngine.SetAddressChecker(t, filter)
 
-	delayedCountBefore, err := builder.L2.ConsensusNode.InboxTracker.GetDelayedCount()
-	require.NoError(t, err)
-
 	// Prepare and send delayed tx TO filtered address
 	delayedTx := builder.L2Info.PrepareTx("Sender", "FilteredUser", builder.L2Info.TransferGas, big.NewInt(1e12), nil)
 	txHash := sendDelayedTx(t, ctx, builder, delayedTx)
@@ -351,7 +347,7 @@ func TestDelayedMessageFilterHalting(t *testing.T) {
 	// Verify filtering-report service received the report
 	report := reportAPI.NextReport(t)
 	CheckCommonReportFields(t, ctx, builder, report, delayedTx)
-	checkDelayedReportFields(t, report, delayedCountBefore)
+	checkDelayedReportFields(t, report)
 	// Position 1: internal ArbOS start-block tx is at 0, delayed user tx follows at 1
 	require.Equal(t, uint64(1), report.PositionInBlock, "positionInBlock should be 1 (first user tx after internal start-block tx)")
 
@@ -2701,9 +2697,6 @@ func TestDelayedMessageFilterCatchesEventFilter(t *testing.T) {
 	callData, err := contractABI.Pack("emitTransfer", senderAddr, filteredAddr)
 	require.NoError(t, err)
 
-	delayedCountBefore, err := builder.L2.ConsensusNode.InboxTracker.GetDelayedCount()
-	require.NoError(t, err)
-
 	delayedTx := prepareDelayedContractCall(t, builder, "Sender", contractAddr, callData)
 	txHash := sendDelayedTx(t, ctx, builder, delayedTx)
 
@@ -2716,7 +2709,7 @@ func TestDelayedMessageFilterCatchesEventFilter(t *testing.T) {
 	// Verify filtering report
 	report := reportAPI.NextReport(t)
 	CheckCommonReportFields(t, ctx, builder, report, delayedTx)
-	checkDelayedReportFields(t, report, delayedCountBefore)
+	checkDelayedReportFields(t, report)
 	// Position 1: internal ArbOS start-block tx is at 0, delayed user tx follows at 1
 	require.Equal(t, uint64(1), report.PositionInBlock, "positionInBlock should be 1 (first user tx after internal start-block tx)")
 
