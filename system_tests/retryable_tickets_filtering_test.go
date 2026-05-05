@@ -1744,6 +1744,8 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 	CheckCommonReportFields(t, ctx, builder, report, nil)
 	require.Equal(t, ticketId, report.TxHash)
 	checkDelayedReportFields(t, report, delayedCountBefore)
+	// Position 1: the originating retryable submission tx is at position 1 (after internal start-block tx at 0)
+	require.Equal(t, uint64(1), report.PositionInBlock, "positionInBlock should reflect the originating user tx position, not the redeem")
 
 	// Filtered addresses: should contain filteredTarget (the contract the redeem called)
 	require.NotEmpty(t, report.FilteredAddresses)

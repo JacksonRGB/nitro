@@ -353,6 +353,8 @@ func TestDelayedMessageFilterHalting(t *testing.T) {
 	report := reportAPI.NextReport(t)
 	CheckCommonReportFields(t, ctx, builder, report, delayedTx)
 	checkDelayedReportFields(t, report, delayedCountBefore)
+	// Position 1: internal ArbOS start-block tx is at 0, delayed user tx follows at 1
+	require.Equal(t, uint64(1), report.PositionInBlock, "positionInBlock should be 1 (first user tx after internal start-block tx)")
 
 	// Filtered addresses: target address with reason "to" and no EventRuleMatch
 	require.NotEmpty(t, report.FilteredAddresses)
@@ -2717,6 +2719,8 @@ func TestDelayedMessageFilterCatchesEventFilter(t *testing.T) {
 	report := reportAPI.NextReport(t)
 	CheckCommonReportFields(t, ctx, builder, report, delayedTx)
 	checkDelayedReportFields(t, report, delayedCountBefore)
+	// Position 1: internal ArbOS start-block tx is at 0, delayed user tx follows at 1
+	require.Equal(t, uint64(1), report.PositionInBlock, "positionInBlock should be 1 (first user tx after internal start-block tx)")
 
 	foundEventRule := false
 	for _, addr := range report.FilteredAddresses {
