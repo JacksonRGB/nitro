@@ -140,6 +140,18 @@ func TestValidateGenesisAssertionWithBuilder(t *gotesting.T) {
 	Require(t, err)
 }
 
+func TestValidateGenesisAssertionWithNilInitDataReader(t *gotesting.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, true)
+	cleanup := builder.Build(t)
+	defer cleanup()
+
+	err := nitroinit.GetAndValidateGenesisAssertion(ctx, builder.L2.ExecNode.Backend.ArbInterface().BlockChain(), nil, builder.addresses, builder.L1.Client)
+	Require(t, err)
+}
+
 func createCompleteTestNodeOnL1(
 	t *gotesting.T,
 	ctx context.Context,

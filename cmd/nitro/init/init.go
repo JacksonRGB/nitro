@@ -1146,6 +1146,14 @@ func getGenesisAssertionCreationInfo(ctx context.Context, rollupAddress common.A
 	return genesisAssertionCreationInfo, assertionHash, true, err
 }
 
+// Only meaningful while head is at genesis.
+func ShouldValidateGenesisAssertion(currentBlock *types.Header, cfg *conf.InitConfig) (bool, error) {
+	if currentBlock == nil {
+		return false, errors.New("failed to get current block when checking whether to validate genesis assertion")
+	}
+	return currentBlock.Number.Sign() == 0 && cfg.ValidateGenesisAssertion, nil
+}
+
 func GetAndValidateGenesisAssertion(ctx context.Context, l2BlockChain *core.BlockChain, initDataReader statetransfer.InitDataReader, rollupAddrs *chaininfo.RollupAddresses, l1Client *ethclient.Client) error {
 	genesisBlock := l2BlockChain.Genesis()
 	sendRoot := types.DeserializeHeaderExtraInformation(genesisBlock.Header()).SendRoot
@@ -1155,12 +1163,17 @@ func GetAndValidateGenesisAssertion(ctx context.Context, l2BlockChain *core.Bloc
 	}
 
 	if isBoldChain {
-		accountsReader, err := initDataReader.GetAccountDataReader()
-		if err != nil {
-			return err
+		// Warm restart has no initDataReader, and the state root can't proxy
+		// "had accounts" because ArbOS state is always written to genesis.
+		hasAccounts := false
+		if initDataReader != nil {
+			accountsReader, err := initDataReader.GetAccountDataReader()
+			if err != nil {
+				return err
+			}
+			hasAccounts = accountsReader.More()
 		}
-
-		return validateGenesisAssertion(genesisAssertionCreationInfo, genesisAssertionHash, genesisBlock.Hash(), sendRoot, accountsReader.More())
+		return validateGenesisAssertion(genesisAssertionCreationInfo, genesisAssertionHash, genesisBlock.Hash(), sendRoot, hasAccounts)
 	}
 
 	return nil

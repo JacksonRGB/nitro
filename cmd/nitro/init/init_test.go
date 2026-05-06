@@ -30,16 +30,19 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/params"
 
 	"github.com/offchainlabs/nitro/arbnode"
+	"github.com/offchainlabs/nitro/bold/protocol"
 	"github.com/offchainlabs/nitro/cmd/chaininfo"
 	"github.com/offchainlabs/nitro/cmd/conf"
 	"github.com/offchainlabs/nitro/cmd/nitro/config"
 	"github.com/offchainlabs/nitro/execution/gethexec"
+	"github.com/offchainlabs/nitro/solgen/go/rollupgen"
 	"github.com/offchainlabs/nitro/statetransfer"
 	"github.com/offchainlabs/nitro/util/testhelpers"
 	"github.com/offchainlabs/nitro/util/testhelpers/env"
@@ -1345,6 +1348,74 @@ func TestGetInitWithChainconfigInDB(t *testing.T) {
 
 	// Make sure chainConfig that was read from DB still matches expected chainConfig
 	require.Equal(t, expectedChainConfig, chainConfig)
+}
+
+func TestShouldValidateGenesisAssertion(t *testing.T) {
+	genesisHeader := &types.Header{Number: big.NewInt(0)}
+	pastGenesisHeader := &types.Header{Number: big.NewInt(1)}
+
+	for _, tc := range []struct {
+		name       string
+		header     *types.Header
+		cfgEnabled bool
+		want       bool
+		wantErr    bool
+	}{
+		{"head at genesis with flag enabled", genesisHeader, true, true, false},
+		{"head past genesis with flag enabled", pastGenesisHeader, true, false, false},
+		{"head at genesis with flag disabled", genesisHeader, false, false, false},
+		{"head past genesis with flag disabled", pastGenesisHeader, false, false, false},
+		{"nil header is fatal", nil, true, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &conf.InitConfig{ValidateGenesisAssertion: tc.cfgEnabled}
+			got, err := ShouldValidateGenesisAssertion(tc.header, cfg)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestValidateGenesisAssertion(t *testing.T) {
+	genesisHash := common.HexToHash("0xaa")
+	otherHash := common.HexToHash("0xbb")
+	zeroState := rollupgen.AssertionState{GlobalState: rollupgen.GlobalState{}}
+	nonNullMatching := rollupgen.AssertionState{GlobalState: rollupgen.GlobalState{
+		Bytes32Vals: [2][32]byte{genesisHash, {}},
+		U64Vals:     [2]uint64{1, 0},
+	}}
+	nonNullMismatching := rollupgen.AssertionState{GlobalState: rollupgen.GlobalState{
+		Bytes32Vals: [2][32]byte{otherHash, {}},
+		U64Vals:     [2]uint64{1, 0},
+	}}
+
+	for _, tc := range []struct {
+		name        string
+		before      rollupgen.AssertionState
+		after       rollupgen.AssertionState
+		hasAccounts bool
+		wantErrSub  string
+	}{
+		{"null assertion without accounts is allowed", zeroState, zeroState, false, ""},
+		{"null assertion with accounts is rejected", zeroState, zeroState, true, "accounts in the init data"},
+		{"non-null assertion with matching block hash is allowed", zeroState, nonNullMatching, false, ""},
+		{"non-null assertion with matching block hash and accounts is allowed", zeroState, nonNullMatching, true, ""},
+		{"non-null assertion with mismatching block hash is rejected", zeroState, nonNullMismatching, false, "doesn't match the genesis blockHash"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			info := &protocol.AssertionCreatedInfo{BeforeState: tc.before, AfterState: tc.after}
+			err := validateGenesisAssertion(info, [32]byte{}, genesisHash, common.Hash{}, tc.hasAccounts)
+			if tc.wantErrSub == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.wantErrSub)
+			}
+		})
+	}
 }
 
 func Require(t *testing.T, err error, text ...interface{}) {
