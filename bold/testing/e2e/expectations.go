@@ -67,8 +67,8 @@ func expectChallengeWinWithAllHonestEssentialEdgesConfirmed(
 			t.Fatal("assertion was not confirmed")
 		}
 
-		// No more edges will be added here, so we then scrape all the edges added to the challenge.
-		// We await until all the essential root edges are also confirmed by time.
+		// Scrape the edges that have been added to the challenge so far, then
+		// wait until all of the essential root edges among them are confirmed.
 		cm, err := challengeV2gen.NewEdgeChallengeManager(cmAddr, backend)
 		require.NoError(t, err)
 
@@ -95,19 +95,50 @@ func expectChallengeWinWithAllHonestEssentialEdgesConfirmed(
 			}
 			honestEssentialRootIds[it.Event.EdgeId] = false
 		}
-		// Wait until all of the honest essential root ids are confirmed.
+
+		// Wait until all of the honest essential root ids are confirmed, with a
+		// per-test deadline well below the package's global test timeout so a
+		// stall surfaces as a structured failure (with the unconfirmed edge
+		// IDs) instead of silently consuming the entire CI budget.
+		waitCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+		defer cancel()
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
 		confirmedCount := 0
 		for confirmedCount < len(honestEssentialRootIds) {
 			for k, markedConfirmed := range honestEssentialRootIds {
-				edge, err := cm.GetEdge(&bind.CallOpts{}, k)
-				require.NoError(t, err)
-				if edge.Status == 1 && !markedConfirmed {
+				if markedConfirmed {
+					continue
+				}
+				// retry.UntilSucceeds only returns an error when ctx is done,
+				// so on err we just exit the inner loop and let the outer
+				// select emit the structured diagnostic.
+				edge, err := retry.UntilSucceeds(waitCtx, func() (challengeV2gen.ChallengeEdge, error) {
+					return cm.GetEdge(&bind.CallOpts{Context: waitCtx}, k)
+				})
+				if err != nil {
+					break
+				}
+				if edge.Status == uint8(protocol.EdgeConfirmed) {
 					confirmedCount += 1
 					honestEssentialRootIds[k] = true
-					t.Logf("Confirmed %d honest essential edges, got edge at level %d", confirmedCount, edge.Level)
+					t.Logf("Confirmed %d/%d honest essential edges, got edge at level %d", confirmedCount, len(honestEssentialRootIds), edge.Level)
 				}
 			}
-			time.Sleep(500 * time.Millisecond) // Don't spam the backend.
+			if confirmedCount >= len(honestEssentialRootIds) {
+				break
+			}
+			select {
+			case <-waitCtx.Done():
+				unconfirmed := make([]string, 0, len(honestEssentialRootIds)-confirmedCount)
+				for k, markedConfirmed := range honestEssentialRootIds {
+					if !markedConfirmed {
+						unconfirmed = append(unconfirmed, k.Hex())
+					}
+				}
+				t.Fatalf("timed out waiting for honest essential edges: %d/%d confirmed, unconfirmed=%v", confirmedCount, len(honestEssentialRootIds), unconfirmed)
+			case <-ticker.C:
+			}
 		}
 	})
 	return nil
