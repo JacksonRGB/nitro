@@ -76,6 +76,11 @@ func (c *Config) Validate() error {
 	if err := c.ExternalEndpointRetryableErrorSlowdown.Validate(); err != nil {
 		return err
 	}
+	if c.PoisonQueue.QueueURL != "" {
+		if err := c.PoisonQueue.Validate(); err != nil {
+			return err
+		}
+	}
 	return c.ExternalEndpoint.Validate()
 }
 
