@@ -16,7 +16,9 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 
 	"github.com/offchainlabs/nitro/cmd/filtering-report/api"
+	"github.com/offchainlabs/nitro/cmd/filtering-report/signer"
 	"github.com/offchainlabs/nitro/cmd/filtering-report/signer/signertest"
+	"github.com/offchainlabs/nitro/cmd/genericconf"
 	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
 	"github.com/offchainlabs/nitro/util/sqsclient"
 )
@@ -157,41 +159,25 @@ func TestForwarder_ReceiveError(t *testing.T) {
 	}
 }
 
-func TestForwarder_DoesNotDeleteOnSignFailure(t *testing.T) {
+func TestForwarder_FailsConstructionOnExpiredLeaf(t *testing.T) {
 	opts := signertest.DefaultLeafOptions(signertest.DefaultTestSAN)
 	opts.NotAfter = time.Now().Add(-time.Minute)
-	pemPath, endpoint := NewMockExternalEndpoint(t, opts)
+	pemPath, _ := signertest.SigningFixture(t, opts)
 
-	queueClient := &sqsclient.MockQueueClient{}
-	stack := api.NewTestStack(t, queueClient)
-	rpcClient := stack.Attach()
-	t.Cleanup(func() { rpcClient.Close() })
-
-	reports := []addressfilter.FilteredTxReport{{
-		ID:                "",
-		TxHash:            common.HexToHash("0x01"),
-		TxRLP:             nil,
-		FilteredAddresses: nil,
-		ChainID:           0,
-		BlockNumber:       0,
-		ParentBlockHash:   common.Hash{},
-		PositionInBlock:   0,
-		FilteredAt:        time.Time{},
-		IsDelayed:         false,
-		DelayedReportData: nil,
-	}}
-	if err := rpcClient.Call(nil, "filteringreport_reportFilteredTransactions", reports); err != nil {
-		t.Fatal(err)
+	signerCfg := signer.DefaultConfig
+	signerCfg.PEMFile = pemPath
+	config := &Config{
+		Workers:            1,
+		PollInterval:       10 * time.Millisecond,
+		SQSWaitTimeSeconds: DefaultConfig.SQSWaitTimeSeconds,
+		ExternalEndpoint: genericconf.HTTPClientConfig{
+			URL:     "http://127.0.0.1:0",
+			Timeout: genericconf.HTTPClientConfigDefault.Timeout,
+		},
+		Signer: signerCfg,
 	}
-
-	fwd := NewTestForwarder(t, queueClient, endpoint.URL(), pemPath)
-	fwd.pollAndForward(t.Context())
-
-	if got := endpoint.ReceivedCount(); got != 0 {
-		t.Fatalf("expected endpoint not hit when signing fails, got %d requests", got)
-	}
-	if deleted := queueClient.DeletedReceiptHandles(); len(deleted) != 0 {
-		t.Fatalf("expected 0 deletes after sign failure, got %d", len(deleted))
+	if _, err := New(config, &sqsclient.MockQueueClient{}); err == nil {
+		t.Fatal("expected New to fail on expired leaf")
 	}
 }
 

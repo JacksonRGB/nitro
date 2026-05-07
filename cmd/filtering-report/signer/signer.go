@@ -105,7 +105,20 @@ func (s *Signer) Reload() error {
 	if err != nil {
 		return err
 	}
+	if err := checkLeafValidity(creds.leafCert, time.Now()); err != nil {
+		return err
+	}
 	s.creds.Store(creds)
+	return nil
+}
+
+func checkLeafValidity(leaf *x509.Certificate, now time.Time) error {
+	if now.Before(leaf.NotBefore) {
+		return fmt.Errorf("leaf certificate not yet valid (NotBefore=%s, now=%s)", leaf.NotBefore, now)
+	}
+	if now.After(leaf.NotAfter) {
+		return fmt.Errorf("leaf certificate expired (NotAfter=%s, now=%s)", leaf.NotAfter, now)
+	}
 	return nil
 }
 
@@ -114,11 +127,8 @@ func (s *Signer) SignHTTPRequest(req *http.Request, body []byte, now time.Time) 
 	if creds == nil {
 		return errors.New("no signing credentials loaded")
 	}
-	if now.Before(creds.leafCert.NotBefore) {
-		return fmt.Errorf("leaf certificate not yet valid (NotBefore=%s, now=%s)", creds.leafCert.NotBefore, now)
-	}
-	if now.After(creds.leafCert.NotAfter) {
-		return fmt.Errorf("leaf certificate expired (NotAfter=%s, now=%s)", creds.leafCert.NotAfter, now)
+	if err := checkLeafValidity(creds.leafCert, now); err != nil {
+		return err
 	}
 	timestamp := strconv.FormatInt(now.Unix(), 10)
 	payload := BuildSigningPayload(timestamp, body)
