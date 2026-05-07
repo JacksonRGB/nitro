@@ -112,7 +112,7 @@ func addFlags(f *pflag.FlagSet) {
 	genericconf.WSConfigAddOptions("ws", f)
 	genericconf.IPCConfigAddOptions("ipc", f)
 
-	sqsclient.QueueConfigAddOptions("queue", f)
+	sqsclient.QueueConfigAddOptions("queue", f, "SQS queue URL for filtered transaction reports")
 	forwarder.ConfigAddOptions("report-forwarder", f)
 }
 

@@ -85,7 +85,7 @@ func ConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Int32(prefix+".sqs-wait-time-seconds", DefaultConfig.SQSWaitTimeSeconds, "SQS long polling wait time in seconds")
 	genericconf.HTTPClientConfigAddOptions(prefix+".external-endpoint", f)
 	ExternalEndpointRetryableErrorSlowdownConfigAddOptions(prefix+".external-endpoint-retryable-error-slowdown", f)
-	sqsclient.QueueConfigAddOptions(prefix+".poison-queue", f)
+	sqsclient.QueueConfigAddOptions(prefix+".poison-queue", f, "SQS queue URL for messages that failed with non-retryable errors")
 }
 
 // Forwarder polls messages from an SQS queue and forwards them to an external
