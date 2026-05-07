@@ -77,7 +77,13 @@ fn jit_float64_binop(op: &str) -> Result<(Store, Instance)> {
     Ok((store, instance))
 }
 
-fn call_i32_binop(store: &mut Store, instance: &Instance, fname: &str, a: u32, b: u32) -> Result<u32> {
+fn call_i32_binop(
+    store: &mut Store,
+    instance: &Instance,
+    fname: &str,
+    a: u32,
+    b: u32,
+) -> Result<u32> {
     let f = instance.exports.get_function(fname)?;
     let res = f.call(store, &[Value::I32(a as i32), Value::I32(b as i32)])?;
     match res[0] {
@@ -86,7 +92,13 @@ fn call_i32_binop(store: &mut Store, instance: &Instance, fname: &str, a: u32, b
     }
 }
 
-fn call_i64_binop(store: &mut Store, instance: &Instance, fname: &str, a: u64, b: u64) -> Result<u64> {
+fn call_i64_binop(
+    store: &mut Store,
+    instance: &Instance,
+    fname: &str,
+    a: u64,
+    b: u64,
+) -> Result<u64> {
     let f = instance.exports.get_function(fname)?;
     let res = f.call(store, &[Value::I64(a as i64), Value::I64(b as i64)])?;
     match res[0] {
@@ -116,7 +128,10 @@ fn test_f32_min_nan_canonicalization() -> Result<()> {
     let (mut jit_store, jit) = jit_float_binop("f32.min")?;
     let jit_bits = call_i32_binop(&mut jit_store, &jit, "op", snan, one)?;
 
-    assert_eq!(jit_bits, canonical_nan, "JIT f32.min should return canonical NaN");
+    assert_eq!(
+        jit_bits, canonical_nan,
+        "JIT f32.min should return canonical NaN"
+    );
     assert_eq!(
         soft_bits, canonical_nan,
         "soft-float f32.min with sNaN operand: got 0x{soft_bits:08x}, want canonical NaN 0x{canonical_nan:08x}"
@@ -137,7 +152,10 @@ fn test_f32_max_nan_canonicalization() -> Result<()> {
     let (mut jit_store, jit) = jit_float_binop("f32.max")?;
     let jit_bits = call_i32_binop(&mut jit_store, &jit, "op", snan, one)?;
 
-    assert_eq!(jit_bits, canonical_nan, "JIT f32.max should return canonical NaN");
+    assert_eq!(
+        jit_bits, canonical_nan,
+        "JIT f32.max should return canonical NaN"
+    );
     assert_eq!(
         soft_bits, canonical_nan,
         "soft-float f32.max with sNaN operand: got 0x{soft_bits:08x}, want canonical NaN 0x{canonical_nan:08x}"
@@ -159,7 +177,10 @@ fn test_f64_min_nan_canonicalization() -> Result<()> {
     let (mut jit_store, jit) = jit_float64_binop("f64.min")?;
     let jit_bits = call_i64_binop(&mut jit_store, &jit, "op", snan, one)?;
 
-    assert_eq!(jit_bits, canonical_nan, "JIT f64.min should return canonical NaN");
+    assert_eq!(
+        jit_bits, canonical_nan,
+        "JIT f64.min should return canonical NaN"
+    );
     assert_eq!(
         soft_bits, canonical_nan,
         "soft-float f64.min with sNaN operand: got 0x{soft_bits:016x}, want canonical NaN 0x{canonical_nan:016x}"
@@ -180,7 +201,10 @@ fn test_f64_max_nan_canonicalization() -> Result<()> {
     let (mut jit_store, jit) = jit_float64_binop("f64.max")?;
     let jit_bits = call_i64_binop(&mut jit_store, &jit, "op", snan, one)?;
 
-    assert_eq!(jit_bits, canonical_nan, "JIT f64.max should return canonical NaN");
+    assert_eq!(
+        jit_bits, canonical_nan,
+        "JIT f64.max should return canonical NaN"
+    );
     assert_eq!(
         soft_bits, canonical_nan,
         "soft-float f64.max with sNaN operand: got 0x{soft_bits:016x}, want canonical NaN 0x{canonical_nan:016x}"
@@ -203,7 +227,10 @@ fn test_f32_add_generated_nan_canonicalization() -> Result<()> {
     let (mut jit_store, jit) = jit_float_binop("f32.add")?;
     let jit_bits = call_i32_binop(&mut jit_store, &jit, "op", pos_inf, neg_inf)?;
 
-    assert_eq!(jit_bits, canonical_nan, "JIT f32.add(+∞, -∞) should return canonical NaN");
+    assert_eq!(
+        jit_bits, canonical_nan,
+        "JIT f32.add(+∞, -∞) should return canonical NaN"
+    );
     assert_eq!(
         soft_bits, canonical_nan,
         "soft-float f32.add(+∞, -∞): got 0x{soft_bits:08x}, want canonical NaN 0x{canonical_nan:08x}"
@@ -224,7 +251,10 @@ fn test_f64_add_generated_nan_canonicalization() -> Result<()> {
     let (mut jit_store, jit) = jit_float64_binop("f64.add")?;
     let jit_bits = call_i64_binop(&mut jit_store, &jit, "op", pos_inf, neg_inf)?;
 
-    assert_eq!(jit_bits, canonical_nan, "JIT f64.add(+∞, -∞) should return canonical NaN");
+    assert_eq!(
+        jit_bits, canonical_nan,
+        "JIT f64.add(+∞, -∞) should return canonical NaN"
+    );
     assert_eq!(
         soft_bits, canonical_nan,
         "soft-float f64.add(+∞, -∞): got 0x{soft_bits:016x}, want canonical NaN 0x{canonical_nan:016x}"
