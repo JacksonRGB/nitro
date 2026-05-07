@@ -207,7 +207,7 @@ func requireFilteredAddress(t *testing.T, report *addressfilter.FilteredTxReport
 // checkPrecheckerReportFields asserts FilteredTxReport invariants specific to the prechecker reporter.
 func checkPrecheckerReportFields(t *testing.T, ctx context.Context, builder *NodeBuilder, report *addressfilter.FilteredTxReport, tx *types.Transaction) {
 	t.Helper()
-	CheckBaseReportFields(t, ctx, builder, report, tx)
+	CheckCommonReportFields(t, ctx, builder, report, tx)
 	require.False(t, report.IsDelayed, "prechecker must not flag tx as delayed")
 	require.Nil(t, report.DelayedReportData, "prechecker must not populate delayed payload")
 	require.Equal(t, uint64(0), report.PositionInBlock, "prechecker has no in-block position")

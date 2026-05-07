@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -37,11 +38,14 @@ import (
 	"github.com/offchainlabs/nitro/util/sqsclient"
 )
 
-// CheckBaseReportFields asserts FilteredTxReport invariants common to every reporter (prechecker, delayed sequencer, regular sequencer).
-func CheckBaseReportFields(t *testing.T, ctx context.Context, builder *NodeBuilder, report *addressfilter.FilteredTxReport, tx *types.Transaction) {
+// CheckCommonReportFields asserts FilteredTxReport fields common to every reporter (prechecker, delayed sequencer, regular sequencer).
+func CheckCommonReportFields(t *testing.T, ctx context.Context, builder *NodeBuilder, report *addressfilter.FilteredTxReport, tx *types.Transaction) {
 	t.Helper()
-	require.Equal(t, tx.Hash(), report.TxHash, "txHash")
+	require.NotEmpty(t, report.TxHash, "report must have tx hash")
 	require.NotEmpty(t, report.ID, "report ID must be set")
+	parsedID, err := uuid.Parse(report.ID)
+	require.NoError(t, err, "report ID must be a valid UUID")
+	require.Equal(t, uuid.Version(7), parsedID.Version(), "report ID must be a UUID v7")
 	require.NotEmpty(t, report.TxRLP, "txRLP must be set")
 	require.NotEmpty(t, report.FilteredAddresses, "report must contain at least one filtered address")
 	require.Equal(t, builder.chainConfig.ChainID.Uint64(), report.ChainID, "chainID")
@@ -51,7 +55,12 @@ func CheckBaseReportFields(t *testing.T, ctx context.Context, builder *NodeBuild
 
 	var decoded types.Transaction
 	require.NoError(t, decoded.UnmarshalBinary(report.TxRLP), "txRLP should decode")
-	require.Equal(t, tx.Hash(), decoded.Hash(), "decoded txRLP hash should match")
+	require.Equal(t, decoded.Hash(), report.TxHash, "decoded txRLP hash should match txHash field")
+
+	if tx != nil {
+		require.Equal(t, tx.Hash(), report.TxHash, "reported tx hash should match actual tx hash")
+		require.Equal(t, tx.Hash(), decoded.Hash(), "decoded tx hash should match actual tx hash")
+	}
 
 	parentBlock, err := builder.L2.Client.BlockByNumber(ctx, big.NewInt(int64(report.BlockNumber-1))) // #nosec G115
 	require.NoError(t, err)
