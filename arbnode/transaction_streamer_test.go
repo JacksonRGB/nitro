@@ -5,22 +5,25 @@ package arbnode
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
 	"github.com/offchainlabs/nitro/arbutil"
+	"github.com/offchainlabs/nitro/util/testhelpers"
 )
 
-// stubBatchDataProvider returns getErr from every batch lookup. Used to simulate
-// the inbox tracker not yet having metadata for a batch referenced by a
-// BatchPostingReport.
+// stubBatchDataProvider returns getErr from the GetSequencerMessageBytes* methods
+// (the only ones exercised by these tests). All other methods return zero values
+// to satisfy the BatchDataProvider interface. Tests can flip getErr to nil to
+// simulate the inbox tracker catching up.
 type stubBatchDataProvider struct {
 	getErr error
 }
@@ -43,25 +46,41 @@ func (p *stubBatchDataProvider) FindParentChainBlockContainingDelayed(ctx contex
 }
 
 // buildBatchPostingReportL2msg constructs a minimal L2msg payload that
-// ParseBatchPostingReportMessageFields can decode. Layout:
+// arbostypes.ParseBatchPostingReportMessageFields can decode. Layout:
 //
 //	batchTimestamp(32) | batchPosterAddr(20) | dataHash(32) | batchNum(32) | l1BaseFee(32)
+//
+// extraGas (uint64) is optional and intentionally omitted; the parser tolerates
+// EOF after l1BaseFee.
 func buildBatchPostingReportL2msg(batchNum uint64) []byte {
 	out := make([]byte, 32+20+32+32+32)
-	// batchNum is read as a 32-byte hash whose low 8 bytes hold the uint64.
-	// The 4th 32-byte slot starts at offset 32+20+32 = 84; write big-endian
-	// uint64 into bytes [108:116].
-	for i := range 8 {
-		out[108+i] = byte(batchNum >> (8 * (7 - i)))
-	}
+	// batchNum sits in the low 8 bytes of the 4th 32-byte slot (offset 84+24=108).
+	binary.BigEndian.PutUint64(out[108:], batchNum)
 	return out
+}
+
+// buildL2NormalMessage returns a non-BatchPostingReport message that GetMessage
+// will read without hitting batchDataProvider. Used to exercise the read-success
+// branch of ExecuteNextMsg.
+func buildL2NormalMessage() arbostypes.MessageWithMetadata {
+	return arbostypes.MessageWithMetadata{
+		Message: &arbostypes.L1IncomingMessage{
+			Header: &arbostypes.L1IncomingMessageHeader{
+				Kind:      arbostypes.L1MessageType_L2Message,
+				RequestId: &common.Hash{},
+				L1BaseFee: common.Big0,
+			},
+			L2msg: []byte{0x00},
+		},
+		DelayedMessagesRead: 1,
+	}
 }
 
 // TestAccumulatorNotFoundErrSubstring guards the substring match in
 // EphemeralErrorHandler against drift in AccumulatorNotFoundErr's text. The
-// handler in TransactionStreamer matches on AccumulatorNotFoundErr.Error() (i.e.
-// "accumulator not found"); changing that string without updating call sites
-// across the codebase would silently break the throttle.
+// throttle in TransactionStreamer is initialised with AccumulatorNotFoundErr.Error()
+// (i.e. "accumulator not found"); changing that string without updating the
+// EphemeralErrorHandler initializer would silently break the throttle.
 func TestAccumulatorNotFoundErrSubstring(t *testing.T) {
 	const want = "accumulator not found"
 	if !strings.Contains(AccumulatorNotFoundErr.Error(), want) {
@@ -70,17 +89,46 @@ func TestAccumulatorNotFoundErrSubstring(t *testing.T) {
 	}
 }
 
-// TestExecuteNextMsgEphemeralAccumulatorNotFound verifies that when the batch
-// data provider returns AccumulatorNotFoundErr while reading a BatchPostingReport
-// message, the ephemeral error handler is engaged so the error isn't logged at
-// ERROR on every retry.
+// TestLogReadMessageErrPicksMessage verifies that logReadMessageErr selects the
+// descriptive message for AccumulatorNotFoundErr (via errors.Is, so wrapping is
+// preserved) and the generic message for any other error.
+func TestLogReadMessageErrPicksMessage(t *testing.T) {
+	logHandler := testhelpers.InitTestLog(t, slog.LevelDebug)
+
+	_, streamer, _, _ := NewTransactionStreamerForTest(t, t.Context(), common.Address{})
+
+	// Wrapped sentinel → descriptive message.
+	wrapped := fmt.Errorf("failed to fetch batch: %w: no metadata for batch 1225668", AccumulatorNotFoundErr)
+	streamer.logReadMessageErr(wrapped, 42)
+	if !logHandler.WasLogged("waiting for inbox tracker") {
+		t.Fatal("expected descriptive 'waiting for inbox tracker' message for wrapped AccumulatorNotFoundErr")
+	}
+	if logHandler.WasLogged("failed to readMessage") {
+		t.Fatal("did not expect generic 'failed to readMessage' message for AccumulatorNotFoundErr")
+	}
+
+	logHandler.Clear()
+	streamer.accNotFoundErrHandler.Reset()
+
+	// Unrelated error → generic message.
+	streamer.logReadMessageErr(errors.New("some unrelated db error"), 42)
+	if !logHandler.WasLogged("failed to readMessage") {
+		t.Fatal("expected generic 'failed to readMessage' for non-accumulator error")
+	}
+	if logHandler.WasLogged("waiting for inbox tracker") {
+		t.Fatal("did not expect descriptive message for unrelated error")
+	}
+}
+
+// TestExecuteNextMsgEphemeralAccumulatorNotFound verifies that when a
+// BatchPostingReport's batch metadata is missing, ExecuteNextMsg engages the
+// ephemeral handler so the error doesn't log at ERROR on every retry.
 func TestExecuteNextMsgEphemeralAccumulatorNotFound(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	exec, streamer, _, _ := NewTransactionStreamerForTest(t, ctx, common.Address{})
 
-	// Sanity: the handler is wired up by NewTransactionStreamer.
 	if streamer.accNotFoundErrHandler == nil {
 		t.Fatal("accNotFoundErrHandler should be initialized by NewTransactionStreamer")
 	}
@@ -89,28 +137,21 @@ func TestExecuteNextMsgEphemeralAccumulatorNotFound(t *testing.T) {
 	stubProvider := &stubBatchDataProvider{
 		getErr: fmt.Errorf("%w: no metadata for batch 1225668", AccumulatorNotFoundErr),
 	}
-	if err := streamer.SetBatchDataProvider(stubProvider, nil); err != nil {
-		Fail(t, err)
-	}
+	Require(t, streamer.SetBatchDataProvider(stubProvider, nil))
 
-	// Set up the streamer's StopWaiter context (needed by GetContextSafe in
-	// GetMessage) without launching the executeMessages loop. Driving
-	// ExecuteNextMsg synchronously below means there's no concurrent writer to
-	// handler.FirstOccurrence — the test goroutine has exclusive access.
+	// StopWaiter context only; skip Start to avoid the executeMessages goroutine
+	// racing on FirstOccurrence.
 	streamer.StopWaiter.Start(ctx, streamer)
 	defer streamer.StopAndWait()
-	if err := exec.Start(ctx); err != nil {
-		Fail(t, err)
-	}
+	Require(t, exec.Start(ctx))
 	defer exec.StopAndWait()
 
-	// Add a BatchPostingReport at idx 1 (init message is auto-added at idx 0).
-	// IsBatchGasFieldsMissing() is true because BatchDataStats and
-	// LegacyBatchGasCost are both nil. Because DelayedMessagesRead != 0 and
-	// FindParentChainBlockContainingDelayed succeeds, the FillInBatchGasFields
-	// callback dispatches to GetSequencerMessageBytesForParentBlock; which the
-	// stub fails with AccumulatorNotFoundErr.
-	bpr := arbostypes.MessageWithMetadata{
+	// DelayedMessagesRead != 0 plus a non-failing FindParentChainBlockContainingDelayed
+	// steers FillInBatchGasFields toward GetSequencerMessageBytesForParentBlock; the
+	// stub fails both byte-fetch methods identically so the dispatch detail isn't
+	// load-bearing for this test. Init message is auto-added at idx 0 by
+	// NewTransactionStreamerForTest → AddFakeInitMessage.
+	batchPostingReport := arbostypes.MessageWithMetadata{
 		Message: &arbostypes.L1IncomingMessage{
 			Header: &arbostypes.L1IncomingMessageHeader{
 				Kind:      arbostypes.L1MessageType_BatchPostingReport,
@@ -121,9 +162,10 @@ func TestExecuteNextMsgEphemeralAccumulatorNotFound(t *testing.T) {
 		},
 		DelayedMessagesRead: 1,
 	}
-	if err := streamer.AddMessages(1, false, []arbostypes.MessageWithMetadata{bpr}, nil); err != nil {
-		Fail(t, err)
+	if !batchPostingReport.Message.IsBatchGasFieldsMissing() {
+		t.Fatal("batch posting report test fixture must have IsBatchGasFieldsMissing() == true; otherwise ExecuteNextMsg won't trigger the batch fetcher")
 	}
+	Require(t, streamer.AddMessages(1, false, []arbostypes.MessageWithMetadata{batchPostingReport}, nil))
 
 	// Confirm the error chain still produces AccumulatorNotFoundErr; important
 	// because the handler matches on substring "accumulator not found".
@@ -135,24 +177,43 @@ func TestExecuteNextMsgEphemeralAccumulatorNotFound(t *testing.T) {
 		t.Fatalf("expected error chain to contain AccumulatorNotFoundErr, got: %v", err)
 	}
 
-	// First call advances exec past the init message at idx 0. Second call hits
-	// the BPR at idx 1, fails the read, and engages the handler.
-	streamer.ExecuteNextMsg(ctx)
+	// exec head is 0 (genesis built from init), consensusHead is 1 (batch posting
+	// report), so msgIdxToExecute = 1: ExecuteNextMsg attempts the read and fails.
 	streamer.ExecuteNextMsg(ctx)
 	if handler.FirstOccurrence.Equal(time.Time{}) {
 		t.Fatal("expected handler to engage after AccumulatorNotFoundErr from ExecuteNextMsg, but FirstOccurrence is still zero")
 	}
+}
 
-	// Reset clears state; mirrors the call on ExecuteNextMsg's success path.
-	handler.Reset()
-	if !handler.FirstOccurrence.Equal(time.Time{}) {
-		t.Fatal("Reset should clear FirstOccurrence")
-	}
+// TestExecuteNextMsgResetsHandlerOnReadSuccess verifies the production-side
+// Reset placement in ExecuteNextMsg: when both reads succeed, FirstOccurrence
+// is cleared before DigestMessage. A regression that moved the Reset to end-of-function
+// would leave FirstOccurrence stale if DigestMessage failed, and this test would catch it.
+func TestExecuteNextMsgResetsHandlerOnReadSuccess(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 
-	// Unrelated errors do not engage the handler.
-	unrelated := errors.New("some unrelated db error")
-	handler.LogLevel(unrelated, log.Error)
+	exec, streamer, _, _ := NewTransactionStreamerForTest(t, ctx, common.Address{})
+
+	streamer.StopWaiter.Start(ctx, streamer)
+	defer streamer.StopAndWait()
+	Require(t, exec.Start(ctx))
+	defer exec.StopAndWait()
+
+	// Add a non-batch-posting-report message so GetMessage succeeds without
+	// hitting batchDataProvider.
+	Require(t, streamer.AddMessages(1, false, []arbostypes.MessageWithMetadata{buildL2NormalMessage()}, nil))
+
+	// Pre-engage the handler as if a prior accumulator-not-found error had fired.
+	handler := streamer.accNotFoundErrHandler
+	*handler.FirstOccurrence = time.Now().Add(-30 * time.Second)
+
+	// ExecuteNextMsg: reads idx 1 successfully (no batch fetching), so the
+	// production Reset at the post-read-success site fires. DigestMessage may
+	// fail on the synthetic L2 message, but Reset has already happened.
+	streamer.ExecuteNextMsg(ctx)
+
 	if !handler.FirstOccurrence.Equal(time.Time{}) {
-		t.Fatal("handler should not engage on errors that don't contain 'accumulator not found'")
+		t.Fatal("expected ExecuteNextMsg's post-read-success Reset to clear FirstOccurrence")
 	}
 }
