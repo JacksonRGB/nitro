@@ -420,17 +420,10 @@ func TestGet(t *testing.T) {
 func TestBacklogSizeInBytesReleasesLockOnError(t *testing.T) {
 	assertLockReleased := func(t *testing.T, name string, seg *backlogSegment) {
 		t.Helper()
-		done := make(chan struct{})
-		go func() {
-			seg.messagesLock.Lock()
-			seg.messagesLock.Unlock()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(2 * time.Second):
+		if !seg.messagesLock.TryLock() {
 			t.Fatalf("%s.messagesLock was left held after backlogSizeInBytes returned an error", name)
 		}
+		seg.messagesLock.Unlock()
 	}
 
 	newBacklog := func() *backlog {
