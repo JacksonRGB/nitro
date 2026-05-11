@@ -283,7 +283,10 @@ func extractMessagesUpTo(
 	return currentState
 }
 
-// Extracts all block header hashes in the range from startHash to endHash.
+// walkBackwards returns the parent-chain header hashes in the half-open range
+// (startHash, endHash], ordered from endHash back to startHash's child.
+// Returns nil if startHash == endHash.
+// Panics if walking back reaches the zero hash without finding startHash.
 func walkBackwards(
 	startHash,
 	endHash common.Hash,
