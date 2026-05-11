@@ -640,17 +640,21 @@ func TestMessageExtractionLayer_TxStreamerHandleReorg(t *testing.T) {
 		defer timeout.Stop()
 		tick := time.NewTicker(100 * time.Millisecond)
 		defer tick.Stop()
+		var lastPollErr error
 		for {
 			newBalance, err := builder.L2.Client.BalanceAt(ctx, txOpts.From, nil)
 			if err == nil && newBalance.Cmp(expectedBalance) == 0 {
 				break
 			}
+			if err != nil {
+				lastPollErr = err
+			}
 			select {
 			case <-tick.C:
 			case <-timeout.C:
-				latestBalance, _ := builder.L2.Client.BalanceAt(ctx, txOpts.From, nil)
-				t.Fatalf("timed out waiting for balance to reflect reorg handling: got %v, want %v (MEL reorg logged=%v, TxStreamer reorg logged=%v)",
-					latestBalance, expectedBalance,
+				latestBalance, balErr := builder.L2.Client.BalanceAt(ctx, txOpts.From, nil)
+				t.Fatalf("timed out waiting for balance to reflect reorg handling: got %v (balErr=%v, lastPollErr=%v), want %v (MEL reorg logged=%v, TxStreamer reorg logged=%v)",
+					latestBalance, balErr, lastPollErr, expectedBalance,
 					logHandler.WasLogged("MEL detected L1 reorg"),
 					logHandler.WasLogged("TransactionStreamer: Reorg detected!"))
 			}
