@@ -120,9 +120,7 @@ func (r *Forwarder) forwardToEndpoint(ctx context.Context, body string) error {
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if err := r.signer.SignHTTPRequest(req, []byte(body), time.Now()); err != nil {
-		return fmt.Errorf("sign request: %w", err)
-	}
+	r.signer.SignHTTPRequest(req, []byte(body), time.Now())
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("send request: %w", err)

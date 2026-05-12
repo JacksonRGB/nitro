@@ -126,7 +126,7 @@ func checkLeafValidity(leaf *x509.Certificate, now time.Time, reloadInterval tim
 	return nil
 }
 
-func (s *Signer) SignHTTPRequest(req *http.Request, body []byte, now time.Time) error {
+func (s *Signer) SignHTTPRequest(req *http.Request, body []byte, now time.Time) {
 	creds := s.creds.Load()
 	timestamp := strconv.FormatInt(now.Unix(), 10)
 	payload := BuildSigningPayload(timestamp, body)
@@ -135,7 +135,6 @@ func (s *Signer) SignHTTPRequest(req *http.Request, body []byte, now time.Time) 
 	req.Header.Set(HeaderSignature, base64.StdEncoding.EncodeToString(signature))
 	req.Header.Set(HeaderSignatureCert, base64.StdEncoding.EncodeToString(creds.leafCert.Raw))
 	req.Header.Set(HeaderSignatureTimestamp, timestamp)
-	return nil
 }
 
 func BuildSigningPayload(timestamp string, body []byte) []byte {
