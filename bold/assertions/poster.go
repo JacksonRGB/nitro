@@ -89,17 +89,41 @@ func (m *Manager) awaitPostingSignal(ctx context.Context) {
 // advanceChainPointer reads the creation info for the given assertion and
 // updates the local chain tracking state so subsequent posting attempts
 // build on top of it.
+//
+// latestAgreedAssertion is only moved forward when the supplied assertion is a
+// direct child of the current value. This catches the race where the catchup
+// loop (RPC-bound, ~1s per step) finishes ingesting an older ancestor after
+// syncAssertions (in-memory, ~30ms per chunk) has already advanced past — an
+// unconditional overwrite would downgrade the cursor and cause subsequent sync
+// chunks to skip the agreement check for assertions in between, which then
+// fire the rival path against our own canonical assertions ("honest validator
+// self-challenge" bug). canonicalAssertions and submittedAssertions are
+// recorded unconditionally because they're append-only and always safe.
+//
+// Equality on hash (not InboxMaxCount.Cmp) is load-bearing: overflow assertions
+// can share InboxMaxCount with their parent (machine hit max-blocks before
+// consuming the next inbox position), so a numeric check would pin catchup at
+// the overflow parent forever. See TestAdvanceChainPointerAllowsOverflowAdvance.
 func (m *Manager) advanceChainPointer(ctx context.Context, assertionId protocol.AssertionHash) error {
 	creationInfo, err := m.chain.ReadAssertionCreationInfo(ctx, assertionId)
 	if err != nil {
 		return fmt.Errorf("could not read creation info for assertion %#x: %w", assertionId.Hash, err)
 	}
-	m.assertionChainData.Lock()
-	m.assertionChainData.latestAgreedAssertion = assertionId
-	m.assertionChainData.canonicalAssertions[assertionId] = creationInfo
-	m.assertionChainData.Unlock()
-	m.submittedAssertions.Insert(assertionId)
+	m.applyChainPointerAdvance(creationInfo)
 	return nil
+}
+
+// applyChainPointerAdvance is the lock-side of advanceChainPointer, split out
+// so the parent-linkage invariant can be exercised directly in unit tests
+// without an on-chain ReadAssertionCreationInfo round-trip.
+func (m *Manager) applyChainPointerAdvance(creationInfo *protocol.AssertionCreatedInfo) {
+	m.assertionChainData.Lock()
+	defer m.assertionChainData.Unlock()
+	m.assertionChainData.canonicalAssertions[creationInfo.AssertionHash] = creationInfo
+	if creationInfo.ParentAssertionHash == m.assertionChainData.latestAgreedAssertion {
+		m.assertionChainData.latestAgreedAssertion = creationInfo.AssertionHash
+	}
+	m.submittedAssertions.Insert(creationInfo.AssertionHash)
 }
 
 // PostAssertion differs depending on whether or not the validator is currently staked.
