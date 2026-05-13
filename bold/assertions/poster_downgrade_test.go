@@ -13,7 +13,7 @@ import (
 	"github.com/offchainlabs/nitro/bold/protocol"
 )
 
-// TestAdvanceChainPointerDoesNotDowngradeLatestAgreedAssertion pins the
+// TestRecordAgreedAssertionDoesNotDowngradeLatestAgreedAssertion pins the
 // structural invariant that fixes the prod "honest validator self-challenge"
 // incident: latestAgreedAssertion must never move backward, even when the
 // catchup goroutine writes an assertion that is an ancestor of (rather than a
@@ -27,7 +27,7 @@ import (
 // for any assertion whose parent is A2. Skipped assertions hit
 // respondToAnyInvalidAssertions' "canonical parent, non-canonical self" branch
 // and trigger a self-challenge against our own canonical assertion.
-func TestAdvanceChainPointerDoesNotDowngradeLatestAgreedAssertion(t *testing.T) {
+func TestRecordAgreedAssertionDoesNotDowngradeLatestAgreedAssertion(t *testing.T) {
 	a0 := protocol.AssertionHash{Hash: hashFromString("A0")}
 	a1 := protocol.AssertionHash{Hash: hashFromString("A1")}
 	a2 := protocol.AssertionHash{Hash: hashFromString("A2")}
@@ -44,7 +44,7 @@ func TestAdvanceChainPointerDoesNotDowngradeLatestAgreedAssertion(t *testing.T) 
 
 	// Slow catchup belatedly applies A1 (an ancestor of latestAgreedAssertion).
 	// A1's parent is A0, not A2, so the cursor must NOT move.
-	m.applyChainPointerAdvance(a1Info)
+	m.applyRecordAgreedAssertion(a1Info)
 
 	require.Equal(t,
 		a2,
@@ -58,11 +58,11 @@ func TestAdvanceChainPointerDoesNotDowngradeLatestAgreedAssertion(t *testing.T) 
 	require.True(t, m.submittedAssertions.Has(a1), "A1 must be tracked in submittedAssertions")
 }
 
-// TestAdvanceChainPointerAdvancesOnDirectChild pins the positive side of the
+// TestRecordAgreedAssertionAdvancesOnDirectChild pins the positive side of the
 // invariant: when the supplied assertion IS a direct child of the current
 // latestAgreedAssertion, the advance must succeed. Without this, the catchup
 // loop can't make progress.
-func TestAdvanceChainPointerAdvancesOnDirectChild(t *testing.T) {
+func TestRecordAgreedAssertionAdvancesOnDirectChild(t *testing.T) {
 	a0 := protocol.AssertionHash{Hash: hashFromString("A0")}
 	a1 := protocol.AssertionHash{Hash: hashFromString("A1")}
 
@@ -71,7 +71,7 @@ func TestAdvanceChainPointerAdvancesOnDirectChild(t *testing.T) {
 
 	m := managerWithCanonical(t, a0, map[protocol.AssertionHash]*protocol.AssertionCreatedInfo{a0: a0Info})
 
-	m.applyChainPointerAdvance(a1Info)
+	m.applyRecordAgreedAssertion(a1Info)
 
 	require.Equal(t, a1, m.assertionChainData.latestAgreedAssertion,
 		"latestAgreedAssertion should advance to a direct child of the current value")
@@ -79,7 +79,7 @@ func TestAdvanceChainPointerAdvancesOnDirectChild(t *testing.T) {
 	require.True(t, hasA1)
 }
 
-// TestAdvanceChainPointerAllowsOverflowAdvance pins the choice of parent-hash
+// TestRecordAgreedAssertionAllowsOverflowAdvance pins the choice of parent-hash
 // linkage (not numeric ordering on InboxMaxCount) for the advance check.
 //
 // Overflow assertions are created when the machine stops mid-batch because it
@@ -90,7 +90,7 @@ func TestAdvanceChainPointerAdvancesOnDirectChild(t *testing.T) {
 //
 // This test would FAIL under a numeric implementation and PASSES under the
 // parent-hash implementation.
-func TestAdvanceChainPointerAllowsOverflowAdvance(t *testing.T) {
+func TestRecordAgreedAssertionAllowsOverflowAdvance(t *testing.T) {
 	parent := protocol.AssertionHash{Hash: hashFromString("parent")}
 	child := protocol.AssertionHash{Hash: hashFromString("child-overflow")}
 
@@ -108,14 +108,14 @@ func TestAdvanceChainPointerAllowsOverflowAdvance(t *testing.T) {
 
 	m := managerWithCanonical(t, parent, map[protocol.AssertionHash]*protocol.AssertionCreatedInfo{parent: parentInfo})
 
-	m.applyChainPointerAdvance(childInfo)
+	m.applyRecordAgreedAssertion(childInfo)
 
 	require.Equal(t, child, m.assertionChainData.latestAgreedAssertion,
 		"overflow child (same InboxMaxCount as parent) must be allowed to advance "+
 			"the chain pointer — a numeric-ordering check would have left catchup stuck")
 }
 
-// managerWithCanonical builds a Manager with only the fields advanceChainPointer
+// managerWithCanonical builds a Manager with only the fields recordAgreedAssertion
 // touches, pre-seeded with the supplied canonical map and latestAgreedAssertion.
 func managerWithCanonical(
 	t *testing.T,

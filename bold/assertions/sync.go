@@ -435,16 +435,11 @@ func (m *Manager) maybePostRivalAssertionAndChallenge(
 		return nil, nil
 	}
 
-	// Defense-in-depth: if the assertion we just computed as the "correct rival"
-	// has the same hash as the assertion we declared invalid, the disagreement at
-	// findCanonicalAssertionBranch was spurious — typically a transient
-	// inconsistency where ExecutionStateAfterPreviousState returned a wrong
-	// EndHistoryRoot at T1 and the right one at T2. The on-chain assertion is
-	// actually canonical and there is no rival to challenge. Bail before opening a
-	// challenge that would broadcast a doomed-to-revert createLayerZeroEdge tx
-	// against a canonical assertion (the "honest validator self-challenge" bug).
-	// We still return postedRival so the caller adds it to canonicalAssertions and
-	// the disagreement loop self-heals on the next sync.
+	// Defense-in-depth: same-hash means we actually agree with the on-chain
+	// assertion — there's no rival to challenge. Bail before HandleCorrectRival
+	// to avoid broadcasting a doomed createLayerZeroEdge against a canonical
+	// assertion. Returning postedRival lets the caller add it to canonicalAssertions
+	// so the loop self-heals next sync.
 	if postedRival.AssertionHash == args.invalidAssertion.AssertionHash {
 		log.Warn(
 			"Computed correct rival has the same hash as the detected invalid assertion; "+
