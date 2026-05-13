@@ -232,6 +232,16 @@ if [[ -n "$SALT_OVERRIDE" ]]; then
         || die "invalid --salt: expected UUID 8-4-4-4-12 hex, got: $SALT_OVERRIDE"
 fi
 
+# issued_at is RFC 3339 UTC with no fractional seconds (exactly 20 chars).
+# Under --seed we use a fixed placeholder so seeded runs stay byte-identical.
+if [[ -n "$SEED" ]]; then
+    ISSUED_AT="1970-01-01T00:00:00Z"
+else
+    ISSUED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+fi
+
+HASHING_SCHEME="sha256-stringinput"
+
 HASH_PREFIX="${SALT}::0x"
 
 # ---------------------------------------------------------------------------
@@ -248,14 +258,14 @@ done
 # Filler count from byte arithmetic.
 #
 # Layout (no whitespace between entries):
-#   header               155 bytes  ({"id":"<36>","extract_uuid":"<36>","salt":"<36>","hashes":[)
+#   header               228 bytes  ({"id":"<36>","extract_uuid":"<36>","salt":"<36>","issued_at":"<20>","hashing_scheme":"sha256-stringinput","hashes":[)
 #   each non-final hash   69 bytes  ("0x<64hex>",)
 #   final hash            68 bytes  ("0x<64hex>")
 #   footer                 2 bytes  (]})
 #
-#   total = 155 + 69*(N-1) + 68 + 2 = 156 + 69*N
+#   total = 228 + 69*(N-1) + 68 + 2 = 229 + 69*N
 # ---------------------------------------------------------------------------
-TOTAL_HASHES=$(( (TARGET_BYTES - 156) / 69 ))
+TOTAL_HASHES=$(( (TARGET_BYTES - 229) / 69 ))
 FILLER_COUNT=$(( TOTAL_HASHES - REAL_COUNT ))
 
 if (( FILLER_COUNT < 1 )); then
@@ -323,8 +333,8 @@ OUT_PATH="$OUT"
 mkdir -p "$(dirname "$OUT_PATH")"
 
 {
-    printf '{"id":"%s","extract_uuid":"%s","salt":"%s","hashes":[' \
-        "$ID" "$EXTRACT_UUID" "$SALT"
+    printf '{"id":"%s","extract_uuid":"%s","salt":"%s","issued_at":"%s","hashing_scheme":"%s","hashes":[' \
+        "$ID" "$EXTRACT_UUID" "$SALT" "$ISSUED_AT" "$HASHING_SCHEME"
 
     for h in "${REAL_HASHES[@]}"; do
         printf '"0x%s",' "$h"
@@ -343,15 +353,17 @@ mkdir -p "$(dirname "$OUT_PATH")"
 # Summary
 # ---------------------------------------------------------------------------
 ACTUAL_SIZE=$(file_size "$OUT_PATH")
-EXPECTED_SIZE=$(( 156 + 69 * TOTAL_HASHES ))
+EXPECTED_SIZE=$(( 229 + 69 * TOTAL_HASHES ))
 
 printf '\n'
 printf 'wrote: %s\n' "$OUT_PATH"
 printf 'size : %s bytes (target %s, expected %s)\n' "$ACTUAL_SIZE" "$TARGET_BYTES" "$EXPECTED_SIZE"
 printf 'count: %s hashes (%s real + %s filler)\n' "$TOTAL_HASHES" "$REAL_COUNT" "$FILLER_COUNT"
-printf 'id          : %s\n' "$ID"
-printf 'extract_uuid: %s\n' "$EXTRACT_UUID"
-printf 'salt        : %s\n' "$SALT"
+printf 'id            : %s\n' "$ID"
+printf 'extract_uuid  : %s\n' "$EXTRACT_UUID"
+printf 'salt          : %s\n' "$SALT"
+printf 'issued_at     : %s\n' "$ISSUED_AT"
+printf 'hashing_scheme: %s\n' "$HASHING_SCHEME"
 printf '\n'
 printf 'real (address -> hash):\n'
 for i in "${!REAL_ADDRESSES[@]}"; do
