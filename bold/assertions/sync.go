@@ -435,30 +435,41 @@ func (m *Manager) maybePostRivalAssertionAndChallenge(
 		return nil, nil
 	}
 
-	// Defense-in-depth: same-hash means we actually agree with the on-chain
-	// assertion — there's no rival to challenge. Bail before HandleCorrectRival
-	// to avoid broadcasting a doomed createLayerZeroEdge against a canonical
-	// assertion. Returning postedRival lets the caller add it to canonicalAssertions
-	// so the loop self-heals next sync.
-	if postedRival.AssertionHash == args.invalidAssertion.AssertionHash {
+	// Defense-in-depth (1/2): re-verify the rival still exists on chain right
+	// before opening the challenge. retry.UntilSucceeds may have retried this
+	// function several times since the initial postedRival was read, and chain
+	// state can change between attempts. A fresh read here lets us defer to
+	// whatever the chain currently says rather than acting on a possibly stale
+	// view from an earlier iteration.
+	freshRival, err := m.chain.ReadAssertionCreationInfo(ctx, postedRival.AssertionHash)
+	if err != nil {
+		return nil, errors.Wrapf(err, "could not re-verify rival assertion %#x onchain before challenging", postedRival.AssertionHash)
+	}
+
+	// Defense-in-depth (2/2): same-hash means we actually agree with the
+	// on-chain assertion — there is no rival to challenge. Bail before
+	// HandleCorrectRival to avoid broadcasting a doomed createLayerZeroEdge
+	// against a canonical assertion. Returning the assertion lets the caller
+	// add it to canonicalAssertions so the loop self-heals next sync.
+	if freshRival.AssertionHash == args.invalidAssertion.AssertionHash {
 		log.Warn(
 			"Computed correct rival has the same hash as the detected invalid assertion; "+
 				"skipping challenge to avoid challenging a canonical assertion",
-			"assertionHash", postedRival.AssertionHash,
+			"assertionHash", freshRival.AssertionHash,
 			"parentAssertionHash", args.canonicalParent.AssertionHash,
 			"validatorName", m.validatorName,
 		)
-		return postedRival, nil
+		return freshRival, nil
 	}
 
 	if m.rivalHandler == nil {
 		return nil, errors.New("rival handler not set")
 	}
-	err = m.rivalHandler.HandleCorrectRival(ctx, postedRival.AssertionHash)
+	err = m.rivalHandler.HandleCorrectRival(ctx, freshRival.AssertionHash)
 	if err != nil {
 		return nil, err
 	}
-	return postedRival, nil
+	return freshRival, nil
 }
 
 // Attempt to post a rival assertion based on the last agreed with ancestor
