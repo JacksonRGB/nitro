@@ -158,9 +158,6 @@ func (c *TransactionFilteringConfig) Validate() error {
 	if !c.Enable {
 		return nil
 	}
-	if c.AddressFilter.S3.Bucket == "" {
-		return errors.New("transaction-filtering.address-filter.s3.bucket required when transaction-filtering.enable=true")
-	}
 	if err := c.EventFilter.Validate(); err != nil {
 		return fmt.Errorf("invalid event filter config: %w", err)
 	}
