@@ -95,7 +95,7 @@ func (m *Manager) awaitPostingSignal(ctx context.Context) {
 // equality (not InboxMaxCount comparison) is required because overflow
 // assertions share InboxMaxCount with their parent.
 func (m *Manager) recordAgreedAssertion(ctx context.Context, assertionId protocol.AssertionHash) error {
-	creationInfo, err := m.chain.ReadAssertionCreationInfo(ctx, assertionId)
+	creationInfo, err := m.chain.ReadAssertionCreationInfoAtLatest(ctx, assertionId)
 	if err != nil {
 		return fmt.Errorf("could not read creation info for assertion %#x: %w", assertionId.Hash, err)
 	}
