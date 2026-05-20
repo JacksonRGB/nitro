@@ -214,10 +214,12 @@ func (r *Forwarder) forwardToEndpoint(ctx context.Context, body string) error {
 	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024)) // cap error body to avoid unbounded reads
+		body := string(respBody)
 		if readErr != nil {
-			return fmt.Errorf("external endpoint returned status %d (body read error: %w)", resp.StatusCode, readErr)
+			log.Warn("Failed reading external endpoint error response body", "err", readErr, "statusCode", resp.StatusCode)
+			body = fmt.Sprintf("%s (body read error: %s)", body, readErr)
 		}
-		return &httperror.HTTPError{StatusCode: resp.StatusCode, Body: string(respBody)}
+		return &httperror.HTTPError{StatusCode: resp.StatusCode, Body: body}
 	}
 	return nil
 }
