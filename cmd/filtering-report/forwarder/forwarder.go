@@ -17,6 +17,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/log"
 
+	"github.com/offchainlabs/nitro/cmd/filtering-report/signer"
 	"github.com/offchainlabs/nitro/cmd/genericconf"
 	"github.com/offchainlabs/nitro/util/httperror"
 	"github.com/offchainlabs/nitro/util/sqsclient"
@@ -55,6 +56,7 @@ type Config struct {
 	ExternalEndpoint                       genericconf.HTTPClientConfig                 `koanf:"external-endpoint"`
 	ExternalEndpointRetryableErrorSlowdown ExternalEndpointRetryableErrorSlowdownConfig `koanf:"external-endpoint-retryable-error-slowdown"`
 	PoisonQueue                            sqsclient.QueueConfig                        `koanf:"poison-queue"`
+	Signer                                 signer.Config                                `koanf:"signer"`
 }
 
 var DefaultConfig = Config{
@@ -64,6 +66,7 @@ var DefaultConfig = Config{
 	ExternalEndpoint:                       genericconf.HTTPClientConfigDefault,
 	ExternalEndpointRetryableErrorSlowdown: DefaultExternalEndpointRetryableErrorSlowdownConfig,
 	PoisonQueue:                            sqsclient.DefaultQueueConfig,
+	Signer:                                 signer.DefaultConfig,
 }
 
 func (c *Config) Validate() error {
@@ -81,7 +84,10 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
-	return c.ExternalEndpoint.Validate()
+	if err := c.ExternalEndpoint.Validate(); err != nil {
+		return err
+	}
+	return c.Signer.Validate()
 }
 
 func ConfigAddOptions(prefix string, f *pflag.FlagSet) {
@@ -91,6 +97,7 @@ func ConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	genericconf.HTTPClientConfigAddOptions(prefix+".external-endpoint", f)
 	ExternalEndpointRetryableErrorSlowdownConfigAddOptions(prefix+".external-endpoint-retryable-error-slowdown", f)
 	sqsclient.QueueConfigAddOptions(prefix+".poison-queue", f, "SQS queue URL for messages that failed with non-retryable errors")
+	signer.ConfigAddOptions(prefix+".signer", f)
 }
 
 // Forwarder polls messages from an SQS queue and forwards them to an external
@@ -124,6 +131,7 @@ type Forwarder struct {
 	queueClient       sqsclient.QueueClient
 	poisonQueueClient sqsclient.QueueClient
 	httpClient        *http.Client
+	signer            *signer.Signer
 }
 
 func New(config *Config, queueClient sqsclient.QueueClient, poisonQueueClient sqsclient.QueueClient) (*Forwarder, error) {
@@ -133,16 +141,22 @@ func New(config *Config, queueClient sqsclient.QueueClient, poisonQueueClient sq
 	if queueClient == nil {
 		return nil, errors.New("queueClient must not be nil")
 	}
+	sgn, err := signer.NewSigner(&config.Signer)
+	if err != nil {
+		return nil, fmt.Errorf("create signer: %w", err)
+	}
 	return &Forwarder{
 		config:            config,
 		queueClient:       queueClient,
 		poisonQueueClient: poisonQueueClient,
 		httpClient:        &http.Client{Timeout: config.ExternalEndpoint.Timeout},
+		signer:            sgn,
 	}, nil
 }
 
 func (r *Forwarder) Start(ctx context.Context) {
 	r.StopWaiter.Start(ctx, r)
+	r.StartAndTrackChild(r.signer)
 	for i := uint(0); i < r.config.Workers; i++ {
 		var consecutiveRetryableErrors int
 		r.CallIteratively(func(ctx context.Context) time.Duration {
@@ -198,12 +212,13 @@ func (r *Forwarder) sendToPoisonQueue(ctx context.Context, msg sqstypes.Message)
 func (r *Forwarder) forwardToEndpoint(ctx context.Context, body string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.config.ExternalEndpoint.URL, strings.NewReader(body))
 	if err != nil {
-		return err
+		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	r.signer.SignHTTPRequest(req, []byte(body), time.Now())
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("send request: %w", err)
 	}
 	defer func() {
 		if _, drainErr := io.Copy(io.Discard, resp.Body); drainErr != nil {

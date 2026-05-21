@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,12 +18,15 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 
 	"github.com/offchainlabs/nitro/cmd/filtering-report/api"
+	"github.com/offchainlabs/nitro/cmd/filtering-report/signer"
+	"github.com/offchainlabs/nitro/cmd/filtering-report/signer/signertest"
+	"github.com/offchainlabs/nitro/cmd/genericconf"
 	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
 	"github.com/offchainlabs/nitro/util/sqsclient"
 )
 
 func TestForwarder_ForwardsMessages(t *testing.T) {
-	endpoint := NewMockExternalEndpoint(t)
+	pemPath, endpoint := NewMockExternalEndpoint(t)
 
 	queueClient := &sqsclient.MockQueueClient{}
 	stack := api.NewTestStack(t, queueClient)
@@ -62,7 +66,7 @@ func TestForwarder_ForwardsMessages(t *testing.T) {
 	}
 
 	ctx := t.Context()
-	forwarder := NewTestForwarder(t, queueClient, nil, endpoint.URL())
+	forwarder := NewTestForwarder(t, queueClient, nil, endpoint.URL(), pemPath)
 	var consecutiveRetryableErrors int
 	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
 	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
@@ -87,6 +91,7 @@ func TestForwarder_ForwardsMessages(t *testing.T) {
 }
 
 func TestForwarder_EndpointFailure_DoesNotDelete(t *testing.T) {
+	pemPath, _ := signertest.SigningFixture(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -97,27 +102,25 @@ func TestForwarder_EndpointFailure_DoesNotDelete(t *testing.T) {
 	filteringReportClient := stack.Attach()
 	t.Cleanup(func() { filteringReportClient.Close() })
 
-	reports := []addressfilter.FilteredTxReport{
-		{
-			ID:                "",
-			TxHash:            common.HexToHash("0x01"),
-			TxRLP:             nil,
-			FilteredAddresses: nil,
-			ChainID:           0,
-			BlockNumber:       0,
-			ParentBlockHash:   common.Hash{},
-			PositionInBlock:   0,
-			FilteredAt:        time.Time{},
-			IsDelayed:         false,
-			DelayedReportData: nil,
-		},
-	}
+	reports := []addressfilter.FilteredTxReport{{
+		ID:                "",
+		TxHash:            common.HexToHash("0x01"),
+		TxRLP:             nil,
+		FilteredAddresses: nil,
+		ChainID:           0,
+		BlockNumber:       0,
+		ParentBlockHash:   common.Hash{},
+		PositionInBlock:   0,
+		FilteredAt:        time.Time{},
+		IsDelayed:         false,
+		DelayedReportData: nil,
+	}}
 	if err := filteringReportClient.Call(nil, "filteringreport_reportFilteredTransactions", reports); err != nil {
 		t.Fatal(err)
 	}
 
 	ctx := t.Context()
-	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL, pemPath)
 	var consecutiveRetryableErrors int
 	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
 
@@ -128,21 +131,15 @@ func TestForwarder_EndpointFailure_DoesNotDelete(t *testing.T) {
 }
 
 func TestForwarder_EmptyQueue(t *testing.T) {
-	externalEndpointServerCalled := false
-	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		externalEndpointServerCalled = true
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer externalEndpointServer.Close()
-
+	pemPath, endpoint := NewMockExternalEndpoint(t)
 	queueClient := &sqsclient.MockQueueClient{}
 
-	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL, pemPath)
 	var consecutiveRetryableErrors int
 	interval := forwarder.pollAndForward(t.Context(), &consecutiveRetryableErrors)
 
-	if externalEndpointServerCalled {
-		t.Fatal("expected no HTTP calls on empty queue")
+	if got := endpoint.ReceivedCount(); got != 0 {
+		t.Fatalf("expected no HTTP calls on empty queue, got %d", got)
 	}
 	deleted := queueClient.DeletedReceiptHandles()
 	if len(deleted) != 0 {
@@ -154,16 +151,12 @@ func TestForwarder_EmptyQueue(t *testing.T) {
 }
 
 func TestForwarder_ReceiveError(t *testing.T) {
-	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("expected no HTTP calls when Receive fails")
-	}))
-	defer externalEndpointServer.Close()
-
+	pemPath, endpoint := NewMockExternalEndpoint(t)
 	queueClient := &sqsclient.MockQueueClient{
 		ReceiveErr: fmt.Errorf("simulated SQS error"),
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL, pemPath)
 	var consecutiveRetryableErrors int
 	interval := forwarder.pollAndForward(t.Context(), &consecutiveRetryableErrors)
 
@@ -172,8 +165,34 @@ func TestForwarder_ReceiveError(t *testing.T) {
 	}
 }
 
+func TestForwarder_FailsConstructionOnExpiredLeaf(t *testing.T) {
+	opts := signertest.DefaultLeafOptions(signertest.DefaultTestSAN)
+	opts.NotAfter = time.Now().Add(-time.Minute)
+	pemPath, _ := signertest.SigningFixture(t, opts)
+
+	signerCfg := signer.DefaultConfig
+	signerCfg.PEMFile = pemPath
+	config := &Config{
+		Workers:            1,
+		PollInterval:       10 * time.Millisecond,
+		SQSWaitTimeSeconds: DefaultConfig.SQSWaitTimeSeconds,
+		ExternalEndpoint: genericconf.HTTPClientConfig{
+			URL:     "http://127.0.0.1:0",
+			Timeout: genericconf.HTTPClientConfigDefault.Timeout,
+		},
+		Signer: signerCfg,
+	}
+	_, err := New(config, &sqsclient.MockQueueClient{})
+	if err == nil {
+		t.Fatal("expected New to fail on expired leaf")
+	}
+	if !strings.Contains(err.Error(), "leaf certificate") {
+		t.Fatalf("expected signer leaf-certificate error, got: %v", err)
+	}
+}
+
 func TestForwarder_DeleteError(t *testing.T) {
-	endpoint := NewMockExternalEndpoint(t)
+	pemPath, endpoint := NewMockExternalEndpoint(t)
 
 	queueClient := &sqsclient.MockQueueClient{
 		DeleteErr: fmt.Errorf("simulated SQS delete error"),
@@ -199,7 +218,7 @@ func TestForwarder_DeleteError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, nil, endpoint.URL())
+	forwarder := NewTestForwarder(t, queueClient, nil, endpoint.URL(), pemPath)
 	var consecutiveRetryableErrors int
 	interval := forwarder.pollAndForward(t.Context(), &consecutiveRetryableErrors)
 
