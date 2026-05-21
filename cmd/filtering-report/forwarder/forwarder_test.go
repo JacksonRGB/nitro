@@ -504,6 +504,71 @@ func TestForwarder_PoisonQueue_NonRetryableErrorSentToPoisonQueue(t *testing.T) 
 	}
 }
 
+func TestForwarder_TransportError_FallsThroughToSlowdown(t *testing.T) {
+	pemPath, _ := signertest.SigningFixture(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
+	// Stand the server up just to get a real URL, then immediately close it
+	// so subsequent requests fail at the transport layer (connection refused).
+	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	endpointURL := externalEndpointServer.URL
+	externalEndpointServer.Close()
+
+	queueClient := &sqsclient.MockQueueClient{}
+	poisonQueueClient := &sqsclient.MockQueueClient{}
+	stack := api.NewTestStack(t, queueClient)
+	rpcClient := stack.Attach()
+	t.Cleanup(func() { rpcClient.Close() })
+
+	forwarder := NewTestForwarder(t, queueClient, poisonQueueClient, endpointURL, pemPath)
+	threshold := forwarder.config.ExternalEndpointRetryableErrorSlowdown.ConsecutiveRetryableErrors
+
+	reports := make([]addressfilter.FilteredTxReport, threshold)
+	for i := range reports {
+		reports[i] = addressfilter.FilteredTxReport{
+			ID:                "",
+			TxHash:            common.HexToHash(fmt.Sprintf("0x%02x", i+1)),
+			TxRLP:             nil,
+			FilteredAddresses: nil,
+			ChainID:           0,
+			BlockNumber:       0,
+			ParentBlockHash:   common.Hash{},
+			PositionInBlock:   0,
+			FilteredAt:        time.Time{},
+			IsDelayed:         false,
+			DelayedReportData: nil,
+		}
+	}
+	if err := rpcClient.Call(nil, "filteringreport_reportFilteredTransactions", reports); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := t.Context()
+	var consecutiveRetryableErrors int
+
+	// First threshold-1 transport errors should return 0 (immediate re-poll).
+	for i := 0; i < threshold-1; i++ {
+		interval := forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
+		if interval != 0 {
+			t.Fatalf("call %d: expected 0 before threshold, got %v", i+1, interval)
+		}
+	}
+
+	// The threshold-th transport error must trigger the slowdown.
+	interval := forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
+	expected := forwarder.config.ExternalEndpointRetryableErrorSlowdown.Duration
+	if interval != expected {
+		t.Fatalf("expected slowdown duration %v at threshold, got %v", expected, interval)
+	}
+
+	if sent := poisonQueueClient.SentBodies(); len(sent) != 0 {
+		t.Fatalf("expected 0 sends to poison queue on transport error, got %d", len(sent))
+	}
+	if deleted := queueClient.DeletedReceiptHandles(); len(deleted) != 0 {
+		t.Fatalf("expected 0 deletes from main queue on transport error, got %d", len(deleted))
+	}
+}
+
 func TestForwarder_PoisonQueue_SendFailureLeavesMessageInQueue(t *testing.T) {
 	pemPath, _ := signertest.SigningFixture(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
