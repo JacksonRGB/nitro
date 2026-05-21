@@ -255,6 +255,7 @@ func (r *DACertificatePreimageReader) RecoverPayloadAndPreimages(
 }
 
 func main() {
+	setupGarbageCollector()
 	wavmio.OnInit()
 	gethhook.RequireHookedGeth()
 
