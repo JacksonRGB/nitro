@@ -108,11 +108,7 @@ func NewTestForwarder(t *testing.T, queueClient sqsclient.QueueClient, poisonQue
 		ExternalEndpointRetryableErrorSlowdown: DefaultExternalEndpointRetryableErrorSlowdownConfig,
 		Signer:                                 signerCfg,
 	}
-	var poisonQueue sqsclient.QueueClient
-	if poisonQueueClient != nil {
-		poisonQueue = poisonQueueClient
-	}
-	fwd, err := New(config, queueClient, poisonQueue)
+	fwd, err := New(config, queueClient, poisonQueueClient)
 	if err != nil {
 		t.Fatal(err)
 	}
