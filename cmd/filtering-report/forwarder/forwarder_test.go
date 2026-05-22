@@ -4,6 +4,7 @@
 package forwarder
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -495,6 +496,13 @@ func TestForwarder_PoisonQueue_NonRetryableErrorSentToPoisonQueue(t *testing.T) 
 	sentBodies := poisonQueueClient.SentBodies()
 	if len(sentBodies) != 1 {
 		t.Fatalf("expected 1 message sent to poison queue, got %d", len(sentBodies))
+	}
+	var got addressfilter.FilteredTxReport
+	if err := json.Unmarshal([]byte(sentBodies[0]), &got); err != nil {
+		t.Fatalf("decode poison queue body: %v", err)
+	}
+	if got.TxHash != reports[0].TxHash {
+		t.Fatalf("poison queue body TxHash mismatch: expected %s, got %s", reports[0].TxHash.Hex(), got.TxHash.Hex())
 	}
 
 	// Message should have been deleted from main queue.
