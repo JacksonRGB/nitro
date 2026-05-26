@@ -85,7 +85,7 @@ func (s *FilterService) Start(ctx context.Context) {
 				fileTooLargeCounter.Inc(1)
 				log.Error("address-filter S3 file exceeds max-file-size, skipping download; keeping previously loaded list", "err", err)
 			} else {
-				log.Error("failed to sync address-filter list", "err", err)
+				log.Error("failed to sync address-filter list; keeping previously loaded list", "err", err)
 			}
 		}
 		return s.config.PollInterval
