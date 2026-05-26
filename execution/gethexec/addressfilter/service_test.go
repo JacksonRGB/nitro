@@ -4,9 +4,12 @@
 package addressfilter
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +21,7 @@ import (
 
 	"github.com/offchainlabs/nitro/util/s3client"
 	"github.com/offchainlabs/nitro/util/s3syncer"
+	"github.com/offchainlabs/nitro/util/s3syncer/s3syncertest"
 )
 
 func TestHashStore_IsRestricted(t *testing.T) {
@@ -414,6 +418,83 @@ func TestHashStore_LoadedAt(t *testing.T) {
 	loadedAt := store.LoadedAt()
 	if loadedAt.Before(before) || loadedAt.After(after) {
 		t.Errorf("LoadedAt should be between %v and %v, got %v", before, after, loadedAt)
+	}
+}
+
+const filteringTestBucket = "addressfilter-test"
+
+func newFilteringTestConfig(endpoint, key string, maxFileSizeMB int) *Config {
+	cfg := DefaultConfig
+	cfg.S3 = s3syncer.Config{
+		Config: s3client.Config{
+			Region:    "us-east-1",
+			AccessKey: "dummy-access-key",
+			SecretKey: "dummy-secret-key",
+			Endpoint:  endpoint,
+		},
+		Bucket:        filteringTestBucket,
+		ObjectKey:     key,
+		ChunkSizeMB:   s3syncer.DefaultS3Config.ChunkSizeMB,
+		MaxRetries:    s3syncer.DefaultS3Config.MaxRetries,
+		Concurrency:   s3syncer.DefaultS3Config.Concurrency,
+		MaxFileSizeMB: maxFileSizeMB,
+	}
+	return &cfg
+}
+
+func TestFilterService_Initialize_RejectsOversizedFile(t *testing.T) {
+	key := "oversized.json"
+	body := bytes.Repeat([]byte("X"), 2*1024*1024) // 2 MB
+	endpoint := s3syncertest.NewFakeS3(t, filteringTestBucket, map[string][]byte{key: body})
+
+	tooLargeBefore := fileTooLargeCounter.Snapshot().Count()
+	syncFailureBefore := syncFailureCounter.Snapshot().Count()
+
+	service, err := NewFilterService(newFilteringTestConfig(endpoint, key, 1))
+	require.NoError(t, err)
+
+	err = service.Initialize(context.Background())
+	if err == nil {
+		t.Fatal("expected Initialize to return error for oversized file")
+	}
+	if !errors.Is(err, s3syncer.ErrObjectTooLarge) {
+		t.Errorf("expected error chain to include ErrObjectTooLarge, got %v", err)
+	}
+
+	tooLargeDelta := fileTooLargeCounter.Snapshot().Count() - tooLargeBefore
+	syncFailureDelta := syncFailureCounter.Snapshot().Count() - syncFailureBefore
+	if tooLargeDelta != 1 {
+		t.Errorf("fileTooLargeCounter delta: got %d, want 1", tooLargeDelta)
+	}
+	if syncFailureDelta != 1 {
+		t.Errorf("syncFailureCounter delta: got %d, want 1", syncFailureDelta)
+	}
+}
+
+func TestFilterService_Initialize_GenericFailure(t *testing.T) {
+	endpoint := s3syncertest.NewFakeS3(t, filteringTestBucket, nil) // bucket exists, key does not
+
+	tooLargeBefore := fileTooLargeCounter.Snapshot().Count()
+	syncFailureBefore := syncFailureCounter.Snapshot().Count()
+
+	service, err := NewFilterService(newFilteringTestConfig(endpoint, "missing.json", 1))
+	require.NoError(t, err)
+
+	err = service.Initialize(context.Background())
+	if err == nil {
+		t.Fatal("expected Initialize to return error for missing key")
+	}
+	if errors.Is(err, s3syncer.ErrObjectTooLarge) {
+		t.Errorf("missing-key error should not match ErrObjectTooLarge: %v", err)
+	}
+
+	tooLargeDelta := fileTooLargeCounter.Snapshot().Count() - tooLargeBefore
+	syncFailureDelta := syncFailureCounter.Snapshot().Count() - syncFailureBefore
+	if tooLargeDelta != 0 {
+		t.Errorf("fileTooLargeCounter delta: got %d, want 0", tooLargeDelta)
+	}
+	if syncFailureDelta != 1 {
+		t.Errorf("syncFailureCounter delta: got %d, want 1", syncFailureDelta)
 	}
 }
 
