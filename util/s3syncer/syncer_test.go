@@ -119,7 +119,7 @@ func (r *syncerRecorder) onObjectSize(size int64) {
 
 func (r *syncerRecorder) handleData(body []byte, digest string) error {
 	r.handlerCalls++
-	r.lastBody = append([]byte(nil), body...)
+	r.lastBody = bytes.Clone(body)
 	r.lastDigest = digest
 	return nil
 }
