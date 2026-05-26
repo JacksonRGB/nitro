@@ -21,8 +21,8 @@ import (
 
 var (
 	fileSizeGauge       = metrics.NewRegisteredGauge("arb/addressfilter/file/size", nil)
-	fileTooLargeCounter = metrics.NewRegisteredCounter("arb/addressfilter/file/toolarge", nil)
-	syncFailureCounter  = metrics.NewRegisteredCounter("arb/addressfilter/sync/failure", nil)
+	fileTooLargeCounter = metrics.NewRegisteredCounter("arb/addressfilter/file/toolarge_total", nil)
+	syncFailureCounter  = metrics.NewRegisteredCounter("arb/addressfilter/sync/failure_total", nil)
 )
 
 // trimHexPrefix strips a leading "0x" or "0X" prefix from a hex string.
