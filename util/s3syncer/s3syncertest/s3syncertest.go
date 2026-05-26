@@ -12,7 +12,7 @@ import (
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
 
-func NewFakeS3(t *testing.T, bucket string, objects map[string][]byte) string {
+func NewFakeS3(t *testing.T, bucket string, objects map[string][]byte) (string, gofakes3.Backend) {
 	t.Helper()
 	backend := s3mem.New()
 	if err := backend.CreateBucket(bucket); err != nil {
@@ -25,5 +25,5 @@ func NewFakeS3(t *testing.T, bucket string, objects map[string][]byte) string {
 	}
 	server := httptest.NewServer(gofakes3.New(backend).Server())
 	t.Cleanup(server.Close)
-	return server.URL
+	return server.URL, backend
 }

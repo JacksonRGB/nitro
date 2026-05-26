@@ -137,7 +137,7 @@ func TestSyncer_RejectsOversizedObject(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			key := "oversized.json"
 			body := bytes.Repeat([]byte("A"), 2*1024*1024) // 2 MB
-			endpoint := s3syncertest.NewFakeS3(t, testBucket, map[string][]byte{key: body})
+			endpoint, _ := s3syncertest.NewFakeS3(t, testBucket, map[string][]byte{key: body})
 
 			rec := &syncerRecorder{}
 			syncer := NewSyncer(newTestConfig(endpoint, key, 1), rec.handleData, rec.onObjectSize)
@@ -167,7 +167,7 @@ func TestSyncer_AcceptsWithinLimit(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			key := "filter.json"
 			body := []byte(`{"id":"0fa6d8c0-0000-0000-0000-000000000001","salt":"00000000-0000-0000-0000-000000000000","hashes":[]}`)
-			endpoint := s3syncertest.NewFakeS3(t, testBucket, map[string][]byte{key: body})
+			endpoint, _ := s3syncertest.NewFakeS3(t, testBucket, map[string][]byte{key: body})
 
 			rec := &syncerRecorder{}
 			syncer := NewSyncer(newTestConfig(endpoint, key, 10), rec.handleData, rec.onObjectSize)
@@ -202,7 +202,7 @@ func TestSyncer_LimitDisabled(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			key := "big.json"
 			body := bytes.Repeat([]byte("B"), 2*1024*1024) // 2 MB
-			endpoint := s3syncertest.NewFakeS3(t, testBucket, map[string][]byte{key: body})
+			endpoint, _ := s3syncertest.NewFakeS3(t, testBucket, map[string][]byte{key: body})
 
 			rec := &syncerRecorder{}
 			syncer := NewSyncer(newTestConfig(endpoint, key, 0), rec.handleData, rec.onObjectSize)
@@ -235,7 +235,7 @@ func TestSyncer_LimitDisabled(t *testing.T) {
 func TestSyncer_HeadObjectError(t *testing.T) {
 	for _, tt := range syncerMethodCases {
 		t.Run(tt.name, func(t *testing.T) {
-			endpoint := s3syncertest.NewFakeS3(t, testBucket, nil) // bucket exists, key does not
+			endpoint, _ := s3syncertest.NewFakeS3(t, testBucket, nil) // bucket exists, key does not
 			rec := &syncerRecorder{}
 			syncer := NewSyncer(newTestConfig(endpoint, "missing.json", 1), rec.handleData, rec.onObjectSize)
 			if err := syncer.Initialize(t.Context()); err != nil {
