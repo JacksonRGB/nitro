@@ -347,21 +347,14 @@ func TestParseHashListJSON(t *testing.T) {
 }
 
 func TestConfig_Validate(t *testing.T) {
-	// Test disabled config (should always be valid)
-	disabledConfig := Config{Enable: false}
-	if err := disabledConfig.Validate(); err != nil {
-		t.Errorf("disabled config should be valid: %v", err)
+	// Test config with missing fields
+	emptyConfig := Config{}
+	if err := emptyConfig.Validate(); err == nil {
+		t.Error("config with missing fields should be invalid")
 	}
 
-	// Test enabled config with missing fields
-	enabledConfig := Config{Enable: true}
-	if err := enabledConfig.Validate(); err == nil {
-		t.Error("enabled config with missing fields should be invalid")
-	}
-
-	// Test valid enabled config
+	// Test valid config
 	validConfig := Config{
-		Enable: true,
 		S3: s3syncer.Config{
 			Config:    s3client.Config{Region: "us-east-1"},
 			Bucket:    "test-bucket",

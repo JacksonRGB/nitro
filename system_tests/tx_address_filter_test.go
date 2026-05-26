@@ -733,9 +733,8 @@ func TestSyncBlockedUntilFilteringReady(t *testing.T) {
 		t.Fatal("SyncMonitor.Synced should return true after pushing sync data")
 	}
 
-	// Create a filter service with enabled config but without loaded rules
+	// Create a filter service with valid config but without loaded rules
 	filterCfg := &addressfilter.Config{
-		Enable: true,
 		S3: s3syncer.Config{
 			Config:    s3client.Config{Region: "us-east-1"},
 			Bucket:    "test-bucket",
