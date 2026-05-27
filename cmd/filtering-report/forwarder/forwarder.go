@@ -16,12 +16,22 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 
 	"github.com/offchainlabs/nitro/cmd/filtering-report/signer"
 	"github.com/offchainlabs/nitro/cmd/genericconf"
 	"github.com/offchainlabs/nitro/util/httperror"
 	"github.com/offchainlabs/nitro/util/sqsclient"
 	"github.com/offchainlabs/nitro/util/stopwaiter"
+)
+
+var (
+	externalEndpointRetryableFailuresCounter = metrics.NewRegisteredCounter(
+		"arb/txfiltering/report/forwarder/external_endpoint_retryable_failures_total", nil,
+	)
+	externalEndpointNonRetryableFailuresCounter = metrics.NewRegisteredCounter(
+		"arb/txfiltering/report/forwarder/external_endpoint_non_retryable_failures_total", nil,
+	)
 )
 
 type ExternalEndpointRetryableErrorSlowdownConfig struct {
@@ -179,10 +189,12 @@ func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableErro
 		log.Error("Failed to forward report to external endpoint", "err", err, "messageId", *msg.MessageId)
 		var httpErr *httperror.HTTPError
 		if errors.As(err, &httpErr) && !httpErr.IsRetryable() {
+			externalEndpointNonRetryableFailuresCounter.Inc(1)
 			*consecutiveRetryableErrors = 0
 			r.sendToPoisonQueue(ctx, msg, httpErr)
 			return 0
 		}
+		externalEndpointRetryableFailuresCounter.Inc(1)
 		*consecutiveRetryableErrors++
 		if *consecutiveRetryableErrors >= r.config.ExternalEndpointRetryableErrorSlowdown.ConsecutiveRetryableErrors {
 			return r.config.ExternalEndpointRetryableErrorSlowdown.Duration
