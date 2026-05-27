@@ -47,6 +47,12 @@ var (
 	sqsDeleteSuccessesCounter = metrics.NewRegisteredCounter(
 		"arb/filtering-report/forwarder/sqs_delete_successes_total", nil,
 	)
+	poisonQueueSendFailuresCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/poison_queue_send_failures_total", nil,
+	)
+	poisonQueueSendSuccessesCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/poison_queue_send_successes_total", nil,
+	)
 )
 
 type ExternalEndpointRetryableErrorSlowdownConfig struct {
@@ -234,10 +240,12 @@ func (r *Forwarder) sendToPoisonQueue(ctx context.Context, msg sqstypes.Message,
 		return
 	}
 	if err := r.poisonQueueClient.Send(ctx, *msg.Body); err != nil {
+		poisonQueueSendFailuresCounter.Inc(1)
 		log.Error("Failed to send message to poison queue", "err", err, "messageId", *msg.MessageId,
 			"triggerStatusCode", httpErr.StatusCode, "triggerBody", httpErr.Body)
 		return
 	}
+	poisonQueueSendSuccessesCounter.Inc(1)
 	log.Info("Sent message to poison queue", "messageId", *msg.MessageId,
 		"triggerStatusCode", httpErr.StatusCode, "triggerBody", httpErr.Body)
 	if err := r.queueClient.Delete(ctx, *msg.ReceiptHandle); err != nil {
