@@ -288,3 +288,42 @@ func TestSyncer_HeadObjectError(t *testing.T) {
 		})
 	}
 }
+
+func TestSyncer_CheckAndSync_SkipsUnchangedObject(t *testing.T) {
+	key := "filter.json"
+	body := []byte(`{"id":"0fa6d8c0-0000-0000-0000-000000000001","salt":"00000000-0000-0000-0000-000000000000","hashes":[]}`)
+	endpoint, _ := s3syncertest.NewFakeS3(t, testBucket, map[string][]byte{key: body})
+
+	rec := &syncerRecorder{}
+	syncer := NewSyncer(newTestConfig(endpoint, key, 10), rec.handleData, rec.onObjectSize)
+	if err := syncer.Initialize(t.Context()); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	if err := syncer.CheckAndSync(t.Context()); err != nil {
+		t.Fatalf("first CheckAndSync: %v", err)
+	}
+	if got, want := len(rec.observedSizes), 1; got != want {
+		t.Fatalf("first call onObjectSize count: got %d, want %d", got, want)
+	}
+	if rec.handlerCalls != 1 {
+		t.Fatalf("first call handler count: got %d, want 1", rec.handlerCalls)
+	}
+	if rec.lastDigest == "" {
+		t.Fatal("first call should set a non-empty digest")
+	}
+	firstDigest := rec.lastDigest
+
+	if err := syncer.CheckAndSync(t.Context()); err != nil {
+		t.Fatalf("second CheckAndSync: %v", err)
+	}
+	if got, want := len(rec.observedSizes), 2; got != want {
+		t.Errorf("second call onObjectSize count: got %d, want %d (size callback must fire on every poll, not only when downloading)", got, want)
+	}
+	if rec.handlerCalls != 1 {
+		t.Errorf("second call handler count: got %d, want 1 (etag match must short-circuit the download)", rec.handlerCalls)
+	}
+	if rec.lastDigest != firstDigest {
+		t.Errorf("digest should be unchanged: got %q, want %q", rec.lastDigest, firstDigest)
+	}
+}
