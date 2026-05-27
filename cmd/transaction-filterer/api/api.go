@@ -29,6 +29,10 @@ var addFilteredTransactionFailureCounter = metrics.NewRegisteredCounter(
 	"arb/transaction-filterer/add_filtered_transaction_failures_total", nil,
 )
 
+var filterQueueDepthGauge = metrics.NewRegisteredGauge(
+	"arb/transaction-filterer/filter_queue_depth", nil,
+)
+
 const filterQueueSize = 100
 
 type TransactionFiltererAPI struct {
@@ -63,6 +67,7 @@ func (t *TransactionFiltererAPI) Start(ctx context.Context) error {
 func (t *TransactionFiltererAPI) Filter(ctx context.Context, txHashToFilter common.Hash) error {
 	select {
 	case t.queue <- txHashToFilter:
+		filterQueueDepthGauge.Update(int64(len(t.queue)))
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -70,6 +75,7 @@ func (t *TransactionFiltererAPI) Filter(ctx context.Context, txHashToFilter comm
 }
 
 func (t *TransactionFiltererAPI) filter(ctx context.Context, txHashToFilter common.Hash) {
+	filterQueueDepthGauge.Update(int64(len(t.queue)))
 	txOpts := *t.txOpts
 	txOpts.Context = ctx
 
