@@ -29,6 +29,8 @@ var (
 	chainCatchingUpCounter       = metrics.NewRegisteredCounter("arb/validator/poster/chain_catching_up", nil)
 )
 
+var errAssertionNotYetFinalized = errors.New("assertion visible at latest but not yet at configured RPC head")
+
 func (m *Manager) postAssertionRoutine(ctx context.Context) {
 	if !m.mode.SupportsStaking() {
 		log.Warn("Staker strategy not configured to stake on latest assertions")
@@ -48,6 +50,9 @@ func (m *Manager) postAssertionRoutine(ctx context.Context) {
 			case errors.Is(err, sol.ErrAlreadyExists):
 			case errors.Is(err, sol.ErrBatchNotYetFound):
 				log.Info("Waiting for more batches to post assertions about them onchain")
+			case errors.Is(err, errAssertionNotYetFinalized):
+				log.Info("Posted assertion not yet visible at configured RPC head; "+
+					"will advance cursor once it finalizes", "err", err)
 			default:
 				logLevel := log.Error
 				logLevel = exceedsMaxMempoolSizeEphemeralErrorHandler.LogLevel(err, logLevel)
@@ -86,17 +91,17 @@ func (m *Manager) awaitPostingSignal(ctx context.Context) {
 	}
 }
 
-// recordAgreedAssertion adds an assertion we agree with to canonicalAssertions
-// and, if it's a direct child of latestAgreedAssertion, advances the cursor to
-// it. The conditional advance prevents the slow catchup goroutine from
-// downgrading latestAgreedAssertion after sync has already moved past — a
-// downgrade would cause subsequent sync chunks to skip agreement checks and
-// fire the rival path against our own canonical assertions. Parent-hash
-// equality (not InboxMaxCount comparison) is required because overflow
-// assertions share InboxMaxCount with their parent.
+// recordAgreedAssertion reads at the configured RPC head so cached data is
+// reorg-safe, then applies it. Returns errAssertionNotYetFinalized when the
+// assertion is visible only at latest.
 func (m *Manager) recordAgreedAssertion(ctx context.Context, assertionId protocol.AssertionHash) error {
-	creationInfo, err := m.chain.ReadAssertionCreationInfoAtLatest(ctx, assertionId)
+	creationInfo, err := m.chain.ReadAssertionCreationInfo(ctx, assertionId)
 	if err != nil {
+		if ctx.Err() == nil {
+			if _, latestErr := m.chain.ReadAssertionCreationInfoAtLatest(ctx, assertionId); latestErr == nil {
+				return fmt.Errorf("%w: assertion %#x", errAssertionNotYetFinalized, assertionId.Hash)
+			}
+		}
 		return fmt.Errorf("could not read creation info for assertion %#x: %w", assertionId.Hash, err)
 	}
 	m.applyRecordAgreedAssertion(creationInfo)
