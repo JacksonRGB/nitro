@@ -544,7 +544,7 @@ func TestFilterService_Initialize_GenericFailure(t *testing.T) {
 func TestFilterService_KeepsListOnOversizedSync(t *testing.T) {
 	salt := uuid.New()
 	restrictedAddr := common.HexToAddress("0x1111111111111111111111111111111111111111")
-	hash := HashWithPrefix(GetHashInputPrefix(salt), restrictedAddr)
+	hash := HashStringInputWithPrefix(GetHashStringInputPrefix(salt), restrictedAddr)
 	payload := map[string]interface{}{
 		"id":             uuid.NewString(),
 		"salt":           salt.String(),
