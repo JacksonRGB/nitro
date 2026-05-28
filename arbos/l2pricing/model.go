@@ -365,7 +365,7 @@ func (ps *L2PricingState) GetMultiGasBaseFeePerResource(blockBaseFee *big.Int) (
 	return fees, nil
 }
 
-func (ps *L2PricingState) MultiDimensionalPriceForRefund(gasUsed multigas.MultiGas, blockBaseFee *big.Int) (*big.Int, error) {
+func (ps *L2PricingState) MultiDimensionalPriceForRefund(usedMultiGas multigas.MultiGas, blockBaseFee *big.Int) (*big.Int, error) {
 	fees, err := ps.GetMultiGasBaseFeePerResource(blockBaseFee)
 	if err != nil {
 		return nil, err
@@ -376,7 +376,7 @@ func (ps *L2PricingState) MultiDimensionalPriceForRefund(gasUsed multigas.MultiG
 		// #nosec G115 safe: NumResourceKind < 2^32
 		kind := multigas.ResourceKind(i)
 
-		amount := gasUsed.Get(kind)
+		amount := usedMultiGas.Get(kind)
 		if amount == 0 {
 			continue
 		}
