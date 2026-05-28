@@ -8,6 +8,8 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/arbitrum/multigas"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
@@ -15,14 +17,15 @@ import (
 	"github.com/offchainlabs/nitro/solgen/go/precompilesgen"
 )
 
-// TestMultiGasRefundWithoutConstraints reproduces a bug where EndTxHook issues
-// a multi-dim gas refund even when no multi-gas constraints are configured.
-// EndTxHook's totalCost uses header.BaseFee (pre-UpdatePricingModel), while
-// MultiDimensionalPriceForRefund reads the post-update BaseFeeWei(). When base
-// fee falls between blocks, the difference is wrongly credited to the sender.
-// The test pumps the backlog, raises the speed limit to force a drain, then
-// asserts the sender's balance delta equals Σ(EffectiveGasPrice * GasUsed).
-func TestMultiGasRefundWithoutConstraints(t *testing.T) {
+// runMultiGasRefundDrainTest runs a pump-and-drain scenario and asserts that
+// the sender's balance delta equals Σ(EffectiveGasPrice × GasUsed). The two
+// lambdas configure the pricing pressure: initialSetup creates it, triggerDrain
+// releases it so the next block's base fee crashes.
+func runMultiGasRefundDrainTest(
+	t *testing.T,
+	initialSetup func(b *NodeBuilder, arbOwner *precompilesgen.ArbOwner, auth *bind.TransactOpts),
+	triggerDrain func(b *NodeBuilder, arbOwner *precompilesgen.ArbOwner, auth *bind.TransactOpts),
+) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -35,14 +38,11 @@ func TestMultiGasRefundWithoutConstraints(t *testing.T) {
 	// Raise the fee cap so the pump burst isn't rejected when base fee spikes.
 	builder.L2Info.GasPrice = big.NewInt(100 * params.GWei)
 
-	// Set speed limit.
 	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, builder.L2.Client)
 	Require(t, err)
 	ownerAuth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
-	tx, err := arbOwner.SetSpeedLimit(&ownerAuth, 5_000)
-	Require(t, err)
-	_, err = builder.L2.EnsureTxSucceeded(tx)
-	Require(t, err)
+
+	initialSetup(builder, arbOwner, &ownerAuth)
 
 	// Fund user account.
 	builder.L2Info.GenerateAccount("User")
@@ -78,13 +78,10 @@ func TestMultiGasRefundWithoutConstraints(t *testing.T) {
 		receipts = append(receipts, sendUserTx(common.Big0))
 	}
 
-	// Raise the speed limit. The next block's internal tx drains the backlog
-	// and BaseFeeWei() crashes, while header.BaseFee still holds the pumped
-	// value — opening the drain window where the bug fires.
-	tx, err = arbOwner.SetSpeedLimit(&ownerAuth, 7_000_000)
-	Require(t, err)
-	_, err = builder.L2.EnsureTxSucceeded(tx)
-	Require(t, err)
+	// Release pressure. The next block's internal tx drains the backlog and
+	// BaseFeeWei() crashes, while header.BaseFee still holds the pumped value —
+	// opening the drain window where the bug fires.
+	triggerDrain(builder, arbOwner, &ownerAuth)
 
 	for range measurementTxs {
 		receipts = append(receipts, sendUserTx(common.Big0))
@@ -120,4 +117,50 @@ func TestMultiGasRefundWithoutConstraints(t *testing.T) {
 			"actualPaid", actualPaid,
 			"overRefund", overRefund)
 	}
+}
+
+// TestMultiGasRefundWithoutConstraints reproduces the bug under the legacy
+// pricing model. The v61 workaround (skip refund when GasModelToUse() !=
+// GasModelMultiGasConstraints) prevents the bug; this test verifies that.
+func TestMultiGasRefundWithoutConstraints(t *testing.T) {
+	setLimit := func(limit uint64) func(*NodeBuilder, *precompilesgen.ArbOwner, *bind.TransactOpts) {
+		return func(b *NodeBuilder, arbOwner *precompilesgen.ArbOwner, auth *bind.TransactOpts) {
+			tx, err := arbOwner.SetSpeedLimit(auth, limit)
+			Require(t, err)
+			_, err = b.L2.EnsureTxSucceeded(tx)
+			Require(t, err)
+		}
+	}
+	runMultiGasRefundDrainTest(t, setLimit(5_000), setLimit(7_000_000))
+}
+
+// TestMultiGasRefundDuringDrainWithConstraints reproduces the root-cause bug
+// that the v61 workaround does not address: in MultiDimensionalPriceForRefund
+// the SingleDim per-kind fee is overridden with BaseFeeWei() (post-update),
+// while EndTxHook's totalCost uses header.BaseFee (pre-update). With a
+// uniform-weight constraint there is no legitimate per-kind refund, so any
+// drift from balance_lost == Σ(EffGasPrice × GasUsed) is the SingleDim bug.
+func TestMultiGasRefundDuringDrainWithConstraints(t *testing.T) {
+	installConstraint := func(targetPerSec uint64) func(*NodeBuilder, *precompilesgen.ArbOwner, *bind.TransactOpts) {
+		return func(b *NodeBuilder, arbOwner *precompilesgen.ArbOwner, auth *bind.TransactOpts) {
+			constraint := precompilesgen.ArbMultiGasConstraintsTypesResourceConstraint{
+				Resources: []precompilesgen.ArbMultiGasConstraintsTypesWeightedResource{
+					{Resource: uint8(multigas.ResourceKindComputation), Weight: 1},
+					{Resource: uint8(multigas.ResourceKindHistoryGrowth), Weight: 1},
+					{Resource: uint8(multigas.ResourceKindStorageAccessRead), Weight: 1},
+					{Resource: uint8(multigas.ResourceKindStorageAccessWrite), Weight: 1},
+					{Resource: uint8(multigas.ResourceKindStorageGrowth), Weight: 1},
+				},
+				AdjustmentWindowSecs: 100,
+				TargetPerSec:         targetPerSec,
+				Backlog:              0,
+			}
+			tx, err := arbOwner.SetMultiGasPricingConstraints(auth,
+				[]precompilesgen.ArbMultiGasConstraintsTypesResourceConstraint{constraint})
+			Require(t, err)
+			_, err = b.L2.EnsureTxSucceeded(tx)
+			Require(t, err)
+		}
+	}
+	runMultiGasRefundDrainTest(t, installConstraint(5_000), installConstraint(7_000_000))
 }
