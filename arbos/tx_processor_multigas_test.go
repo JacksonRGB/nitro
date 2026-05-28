@@ -273,10 +273,12 @@ func TestEndTxHookMultiGasRefundRetryableTx(t *testing.T) {
 	)
 }
 
-// TestEndTxHookMultiGasRefundWithEVMRefundCredit verifies that the multi-dim
-// refund stays invariant under EVM SSTORE refunds (EIP-3529): usedMultiGas's
-// per-kind sum is pre-refund, so totalCost must use peakGasUsed = gasUsed +
-// usedMultiGas.GetRefund() on v61+.
+// TestEndTxHookMultiGasRefundWithEVMRefundCredit verifies that the multi-gas
+// refund stays invariant under EVM SSTORE refunds (EIP-3529). usedMultiGas's
+// per-kind sum is pre-refund (peak); on v61+ MultiDimensionalPriceForRefund
+// subtracts usedMultiGas.GetRefund() * baseFee from its result so it can be
+// paired with the net totalCost = baseFee * (gasLimit - gasLeft) computed in
+// EndTxHook.
 func TestEndTxHookMultiGasRefundWithEVMRefundCredit(t *testing.T) {
 	const gasLimit uint64 = 1_000_000
 	const evmRefundCredit uint64 = 200_000 // EIP-3529 cap
@@ -316,7 +318,8 @@ func TestEndTxHookMultiGasRefundWithEVMRefundCredit(t *testing.T) {
 	require.NoError(t, err)
 	evm.Context.BaseFee = new(big.Int).Set(baseFee)
 
-	peakGasUsed := (gasLimit - gasLeft) + evmRefundCredit
+	gasUsed := gasLimit - gasLeft
+	peakGasUsed := gasUsed + evmRefundCredit
 	usedMultiGas := multigas.MultiGasFromPairs(
 		multigas.Pair{Kind: multigas.ResourceKindComputation, Amount: peakGasUsed / 2},
 		multigas.Pair{Kind: multigas.ResourceKindStorageAccessRead, Amount: peakGasUsed / 2},
@@ -324,9 +327,9 @@ func TestEndTxHookMultiGasRefundWithEVMRefundCredit(t *testing.T) {
 
 	multiDimensionalCost, err := pricing.MultiDimensionalPriceForRefund(usedMultiGas, baseFee)
 	require.NoError(t, err)
-	totalCost := new(big.Int).Mul(baseFee, new(big.Int).SetUint64(peakGasUsed))
+	totalCost := new(big.Int).Mul(baseFee, new(big.Int).SetUint64(gasUsed))
 	expectedRefund := new(big.Int).Sub(totalCost, multiDimensionalCost)
-	require.True(t, expectedRefund.Sign() > 0, "expected positive multi-dim refund, got %v", expectedRefund)
+	require.True(t, expectedRefund.Sign() > 0, "expected positive multi-gas refund, got %v", expectedRefund)
 
 	txProcessor.EndTxHook(gasLeft, usedMultiGas, true)
 
