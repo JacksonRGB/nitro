@@ -26,6 +26,7 @@ import (
 
 	"github.com/offchainlabs/nitro/arbnode"
 	"github.com/offchainlabs/nitro/arbos/l2pricing"
+	"github.com/offchainlabs/nitro/bold/api/db"
 	"github.com/offchainlabs/nitro/bold/assertions"
 	"github.com/offchainlabs/nitro/bold/challenge"
 	modes "github.com/offchainlabs/nitro/bold/challenge/types"
@@ -40,6 +41,7 @@ import (
 	"github.com/offchainlabs/nitro/staker"
 	"github.com/offchainlabs/nitro/staker/bold"
 	"github.com/offchainlabs/nitro/util"
+	"github.com/offchainlabs/nitro/util/containers"
 	"github.com/offchainlabs/nitro/validator/server_common"
 	"github.com/offchainlabs/nitro/validator/valnode"
 )
@@ -128,7 +130,7 @@ func TestBoldSelfChallengeRepro(t *testing.T) {
 		repro.stateManager,
 		[]state.Height{state.Height(repro.blockChallengeLeafHeight)},
 		flaky,
-		nil,
+		containers.None[db.Database](),
 	)
 
 	// Posting disabled so the poster doesn't consume flaky's first-fire
