@@ -59,7 +59,7 @@ func NewS3SyncManager(config *Config, hashStore *HashStore) *S3SyncManager {
 	syncer := s3syncer.NewSyncer(
 		&config.S3,
 		manager.handleHashListData,
-		func(size int64) { fileSizeGauge.Update(size) },
+		fileSizeGauge,
 	)
 
 	manager.Syncer = syncer

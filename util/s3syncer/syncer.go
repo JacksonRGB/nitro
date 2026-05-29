@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 
 	"github.com/offchainlabs/nitro/util/s3client"
 )
@@ -23,17 +24,15 @@ var ErrObjectTooLarge = errors.New("s3 object exceeds max-file-size-mb")
 // DataHandler processes downloaded data and the associated digest.
 type DataHandler func(data []byte, digest string) error
 
-type ObjectSizeHandler func(size int64)
-
 // Syncer handles S3 object syncing with ETag-based change detection.
 type Syncer struct {
-	client       s3client.FullClient
-	config       *Config
-	handleData   DataHandler
-	onObjectSize ObjectSizeHandler
-	digestETag   string
-	failedETag   string
-	mutex        sync.Mutex
+	client          s3client.FullClient
+	config          *Config
+	handleData      DataHandler
+	objectSizeGauge *metrics.Gauge
+	digestETag      string
+	failedETag      string
+	mutex           sync.Mutex
 }
 
 const bytesInMB = 1024 * 1024
@@ -41,12 +40,12 @@ const bytesInMB = 1024 * 1024
 func NewSyncer(
 	config *Config,
 	dataHandler DataHandler,
-	onObjectSize ObjectSizeHandler,
+	objectSizeGauge *metrics.Gauge,
 ) *Syncer {
 	return &Syncer{
-		config:       config,
-		handleData:   dataHandler,
-		onObjectSize: onObjectSize,
+		config:          config,
+		handleData:      dataHandler,
+		objectSizeGauge: objectSizeGauge,
 	}
 }
 
@@ -75,7 +74,7 @@ func (s *Syncer) headAndCheckSize(ctx context.Context) (etag string, size int64,
 		return "", 0, fmt.Errorf("HeadObject failed for s3://%s/%s: %w", s.config.Bucket, s.config.ObjectKey, err)
 	}
 	size = aws.ToInt64(headOutput.ContentLength)
-	s.onObjectSize(size)
+	s.objectSizeGauge.Update(size)
 	if s.config.MaxFileSizeMB > 0 && size > int64(s.config.MaxFileSizeMB)*bytesInMB {
 		return "", size, fmt.Errorf("%w: %d bytes > %d MB limit (s3://%s/%s)",
 			ErrObjectTooLarge, size, s.config.MaxFileSizeMB, s.config.Bucket, s.config.ObjectKey)
