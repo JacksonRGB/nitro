@@ -25,8 +25,12 @@ func TestHashStore_IsRestricted(t *testing.T) {
 
 	// Test empty store
 	addr := common.HexToAddress("0xddfAbCdc4D8FfC6d5beaf154f18B778f892A0740")
-	if store.IsRestricted(addr) {
+	restricted, returnedID := store.IsRestricted(addr)
+	if restricted {
 		t.Error("empty store should not restrict any address")
+	}
+	if returnedID != uuid.Nil {
+		t.Errorf("empty store: expected nil filter set ID, got %s", returnedID)
 	}
 
 	// Create test data
@@ -47,19 +51,28 @@ func TestHashStore_IsRestricted(t *testing.T) {
 	}
 
 	// Store the hashes
-	store.Store(uuid.New(), salt, HashingSchemeStringInput, hashes, "test-etag")
+	filterSetID := uuid.New()
+	store.Store(filterSetID, salt, HashingSchemeStringInput, hashes, "test-etag")
 
 	// Test restricted addresses
 	for _, addr := range addresses {
-		if !store.IsRestricted(addr) {
+		restricted, returnedID := store.IsRestricted(addr)
+		if !restricted {
 			t.Errorf("address %s should be restricted", addr.Hex())
+		}
+		if returnedID != filterSetID {
+			t.Errorf("address %s: expected filter set ID %s, got %s", addr.Hex(), filterSetID, returnedID)
 		}
 	}
 
 	// Test non-restricted address
 	nonRestrictedAddr := common.HexToAddress("0x4444444444444444444444444444444444444444")
-	if store.IsRestricted(nonRestrictedAddr) {
+	restricted, returnedID = store.IsRestricted(nonRestrictedAddr)
+	if restricted {
 		t.Errorf("address %s should not be restricted", nonRestrictedAddr.Hex())
+	}
+	if returnedID != filterSetID {
+		t.Errorf("non-restricted address: expected filter set ID %s, got %s", filterSetID, returnedID)
 	}
 
 	// Test metadata
@@ -79,9 +92,14 @@ func TestHashStore_AtomicSwap(t *testing.T) {
 	hash1 := HashStringInputWithPrefix(GetHashStringInputPrefix(salt1), addr1)
 
 	// Store first set
-	store.Store(uuid.New(), salt1, HashingSchemeStringInput, []common.Hash{hash1}, "etag1")
-	if !store.IsRestricted(addr1) {
+	filterSetID1 := uuid.New()
+	store.Store(filterSetID1, salt1, HashingSchemeStringInput, []common.Hash{hash1}, "etag1")
+	restricted, returnedID := store.IsRestricted(addr1)
+	if !restricted {
 		t.Error("addr1 should be restricted after first load")
+	}
+	if returnedID != filterSetID1 {
+		t.Errorf("expected filter set ID %s, got %s", filterSetID1, returnedID)
 	}
 
 	// Store second set with different salt (simulating hourly rotation)
@@ -89,15 +107,24 @@ func TestHashStore_AtomicSwap(t *testing.T) {
 	addr2 := common.HexToAddress("0x2222222222222222222222222222222222222222")
 	hash2 := HashStringInputWithPrefix(GetHashStringInputPrefix(salt2), addr2)
 
-	store.Store(uuid.New(), salt2, HashingSchemeStringInput, []common.Hash{hash2}, "etag2")
+	filterSetID2 := uuid.New()
+	store.Store(filterSetID2, salt2, HashingSchemeStringInput, []common.Hash{hash2}, "etag2")
 
 	// addr1 should no longer be restricted (different salt)
-	if store.IsRestricted(addr1) {
+	restricted, returnedID = store.IsRestricted(addr1)
+	if restricted {
 		t.Error("addr1 should not be restricted after swap (salt changed)")
 	}
+	if returnedID != filterSetID2 {
+		t.Errorf("expected filter set ID %s after swap, got %s", filterSetID2, returnedID)
+	}
 	// addr2 should now be restricted
-	if !store.IsRestricted(addr2) {
+	restricted, returnedID = store.IsRestricted(addr2)
+	if !restricted {
 		t.Error("addr2 should be restricted after swap")
+	}
+	if returnedID != filterSetID2 {
+		t.Errorf("expected filter set ID %s, got %s", filterSetID2, returnedID)
 	}
 	if store.Digest() != "etag2" {
 		t.Errorf("expected etag 'etag2', got '%s'", store.Digest())
@@ -154,8 +181,10 @@ func TestHashStore_ConcurrentAccess(t *testing.T) {
 					if store.isAllRestricted([]common.Address{addr1, addr2}) ||
 						!store.isAnyRestricted([]common.Address{addr1, addr2}) {
 						// One should be restricted, the other not, atomic swap should ensure consistency
-						t.Log("addr1:", addr1.Hex(), "restricted:", store.IsRestricted(addr1))
-						t.Log("addr2:", addr2.Hex(), "restricted:", store.IsRestricted(addr2))
+						r1, _ := store.IsRestricted(addr1)
+						r2, _ := store.IsRestricted(addr2)
+						t.Log("addr1:", addr1.Hex(), "restricted:", r1)
+						t.Log("addr2:", addr2.Hex(), "restricted:", r2)
 						t.Error("concurrent access yielded inconsistent results")
 					}
 				}
@@ -426,15 +455,15 @@ func TestHashStore_CustomCacheSize(t *testing.T) {
 	store.Store(uuid.New(), salt, HashingSchemeStringInput, hashes, "test-etag")
 
 	// Verify store works correctly with custom size
-	if !store.IsRestricted(addresses[0]) {
+	if restricted, _ := store.IsRestricted(addresses[0]); !restricted {
 		t.Error("address should be restricted")
 	}
-	if !store.IsRestricted(addresses[1]) {
+	if restricted, _ := store.IsRestricted(addresses[1]); !restricted {
 		t.Error("address should be restricted")
 	}
 
 	nonRestrictedAddr := common.HexToAddress("0x3333333333333333333333333333333333333333")
-	if store.IsRestricted(nonRestrictedAddr) {
+	if restricted, _ := store.IsRestricted(nonRestrictedAddr); restricted {
 		t.Error("address should not be restricted")
 	}
 }
@@ -531,16 +560,16 @@ func TestHashStore_RawBytesScheme(t *testing.T) {
 
 	store.Store(uuid.New(), salt, HashingSchemeRawBytesInput, []common.Hash{hashRestricted}, "raw")
 
-	if !store.IsRestricted(addrRestricted) {
+	if restricted, _ := store.IsRestricted(addrRestricted); !restricted {
 		t.Fatal("restricted address should match under raw bytes scheme")
 	}
-	if store.IsRestricted(addrAllowed) {
+	if restricted, _ := store.IsRestricted(addrAllowed); restricted {
 		t.Fatal("allowed address must not match under raw bytes scheme")
 	}
 
 	// Same hash bytes reloaded under string scheme must not match: scheme drives the lookup function.
 	store.Store(uuid.New(), salt, HashingSchemeStringInput, []common.Hash{hashRestricted}, "str")
-	if store.IsRestricted(addrRestricted) {
+	if restricted, _ := store.IsRestricted(addrRestricted); restricted {
 		t.Fatal("raw-bytes hash should not match under string input scheme")
 	}
 }
@@ -568,11 +597,11 @@ func TestRawBytesScheme_ParseStoreLookup(t *testing.T) {
 	store := NewHashStore(8)
 	store.Store(parsed.Id, parsed.Salt, parsed.Scheme, parsed.Hashes, "etag")
 
-	if !store.IsRestricted(addr) {
+	if restricted, _ := store.IsRestricted(addr); !restricted {
 		t.Fatal("vendor address must be restricted after parse+Store under raw bytes scheme")
 	}
 	otherAddr := common.HexToAddress("0x000000000000000000000000000000000000beef")
-	if store.IsRestricted(otherAddr) {
+	if restricted, _ := store.IsRestricted(otherAddr); restricted {
 		t.Fatal("non-listed address must not be restricted")
 	}
 }
