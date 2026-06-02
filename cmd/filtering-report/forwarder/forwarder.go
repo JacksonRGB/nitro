@@ -16,12 +16,46 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 
 	"github.com/offchainlabs/nitro/cmd/filtering-report/signer"
 	"github.com/offchainlabs/nitro/cmd/genericconf"
 	"github.com/offchainlabs/nitro/util/httperror"
 	"github.com/offchainlabs/nitro/util/sqsclient"
 	"github.com/offchainlabs/nitro/util/stopwaiter"
+)
+
+var (
+	externalEndpointRetryableFailuresCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/external_endpoint_retryable_failures_total", nil,
+	)
+	externalEndpointNonRetryableFailuresCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/external_endpoint_non_retryable_failures_total", nil,
+	)
+	externalEndpointSuccessesCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/external_endpoint_successes_total", nil,
+	)
+	sqsReceiveFailuresCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/sqs_receive_failures_total", nil,
+	)
+	sqsReceiveSuccessesCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/sqs_receive_successes_total", nil,
+	)
+	sqsDeleteFailuresCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/sqs_delete_failures_total", nil,
+	)
+	sqsDeleteSuccessesCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/sqs_delete_successes_total", nil,
+	)
+	poisonQueueSendFailuresCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/poison_queue_send_failures_total", nil,
+	)
+	poisonQueueSendSuccessesCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/poison_queue_send_successes_total", nil,
+	)
+	externalEndpointSlowdownTriggeredCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/external_endpoint_slowdown_triggered_total", nil,
+	)
 )
 
 type ExternalEndpointRetryableErrorSlowdownConfig struct {
@@ -168,9 +202,11 @@ func (r *Forwarder) Start(ctx context.Context) {
 func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableErrors *int) time.Duration {
 	msgs, err := r.queueClient.Receive(ctx, r.config.SQSWaitTimeSeconds, 1)
 	if err != nil {
+		sqsReceiveFailuresCounter.Inc(1)
 		log.Error("Failed to receive SQS messages", "err", err)
 		return r.config.PollInterval
 	}
+	sqsReceiveSuccessesCounter.Inc(1)
 	if len(msgs) == 0 {
 		return r.config.PollInterval
 	}
@@ -179,19 +215,26 @@ func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableErro
 		log.Error("Failed to forward report to external endpoint", "err", err, "messageId", *msg.MessageId)
 		var httpErr *httperror.HTTPError
 		if errors.As(err, &httpErr) && !httpErr.IsRetryable() {
+			externalEndpointNonRetryableFailuresCounter.Inc(1)
 			*consecutiveRetryableErrors = 0
 			r.sendToPoisonQueue(ctx, msg, httpErr)
 			return 0
 		}
+		externalEndpointRetryableFailuresCounter.Inc(1)
 		*consecutiveRetryableErrors++
 		if *consecutiveRetryableErrors >= r.config.ExternalEndpointRetryableErrorSlowdown.ConsecutiveRetryableErrors {
+			externalEndpointSlowdownTriggeredCounter.Inc(1)
 			return r.config.ExternalEndpointRetryableErrorSlowdown.Duration
 		}
 		return 0
 	}
+	externalEndpointSuccessesCounter.Inc(1)
 	*consecutiveRetryableErrors = 0
 	if err = r.queueClient.Delete(ctx, *msg.ReceiptHandle); err != nil {
+		sqsDeleteFailuresCounter.Inc(1)
 		log.Error("Failed to delete SQS message after forwarding", "err", err, "messageId", *msg.MessageId)
+	} else {
+		sqsDeleteSuccessesCounter.Inc(1)
 	}
 	return 0
 }
@@ -201,14 +244,19 @@ func (r *Forwarder) sendToPoisonQueue(ctx context.Context, msg sqstypes.Message,
 		return
 	}
 	if err := r.poisonQueueClient.Send(ctx, *msg.Body); err != nil {
+		poisonQueueSendFailuresCounter.Inc(1)
 		log.Error("Failed to send message to poison queue", "err", err, "messageId", *msg.MessageId,
 			"triggerStatusCode", httpErr.StatusCode, "triggerBody", httpErr.Body)
 		return
 	}
+	poisonQueueSendSuccessesCounter.Inc(1)
 	log.Info("Sent message to poison queue", "messageId", *msg.MessageId,
 		"triggerStatusCode", httpErr.StatusCode, "triggerBody", httpErr.Body)
 	if err := r.queueClient.Delete(ctx, *msg.ReceiptHandle); err != nil {
+		sqsDeleteFailuresCounter.Inc(1)
 		log.Error("Failed to delete SQS message after sending to poison queue", "err", err, "messageId", *msg.MessageId)
+	} else {
+		sqsDeleteSuccessesCounter.Inc(1)
 	}
 }
 
