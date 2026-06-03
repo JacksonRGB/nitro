@@ -7,8 +7,8 @@
 #
 # Real hashes (20 hardcoded addresses + any from --addresses) are computed
 # with the production algorithm, selected by --hashing-scheme:
-#   sha256-stringinput  (default): sha256(salt_uuid_string + "::0x" + lowercase_addr_hex)
-#   sha256-rawbytesinput         : sha256(salt_16_raw_bytes || addr_20_raw_bytes)
+#   sha256-rawbytesinput (default): sha256(salt_16_raw_bytes || addr_20_raw_bytes)
+#   sha256-stringinput            : sha256(salt_uuid_string + "::0x" + lowercase_addr_hex)
 # (mirrors execution/gethexec/addressfilter/hash_store.go: HashStringInputWithPrefix /
 # GetHashStringInputPrefix / HashRawBytesInput). The remainder is filler: zero-padded sequential
 # counters formatted as 64-hex strings ("0x000...001", "0x000...002", ...),
@@ -28,7 +28,7 @@ EXTRA_ADDRESSES=""
 SEED=""
 SALT_OVERRIDE=""
 JOBS=8
-HASHING_SCHEME="sha256-stringinput"
+HASHING_SCHEME="sha256-rawbytesinput"
 
 # 20 hardcoded test addresses: 0x00...01 through 0x00...14.
 readonly HARDCODED_ADDRESSES=(
@@ -74,8 +74,8 @@ Options:
       --seed STRING       Derive UUIDs deterministically from this seed (for
                           reproducible fixtures). Filler is always
                           counter-based and reproducible regardless.
-      --hashing-scheme S  Hashing scheme for real hashes: sha256-stringinput
-                          (default) or sha256-rawbytesinput. Written to the
+      --hashing-scheme S  Hashing scheme for real hashes: sha256-rawbytesinput
+                          (default) or sha256-stringinput. Written to the
                           file's hashing_scheme field.
       --jobs N            Number of parallel filler workers. Default: 8.
   -h, --help              Show this help.
