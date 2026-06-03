@@ -167,6 +167,7 @@ func (r *BlockRecorder) RecordBlockCreation(
 			false,
 			core.NewMessageRecordingContext(wasmTargets),
 			false,
+			nil,
 		)
 		if err != nil {
 			return nil, err
