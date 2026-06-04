@@ -10,6 +10,7 @@ use std::{
 
 use arbutil::Color;
 use caller_env::GuestPtr;
+use sha2::Digest;
 use validation::transfer::receive_validation_input;
 
 use crate::{
@@ -121,7 +122,6 @@ pub fn resolve_preimage_impl(
         use arbutil::PreimageType;
         use caller_env::MemAccess;
         use sha2::Sha256;
-        use sha3::{Digest, Keccak256};
 
         let hash: [u8; 32] = mem.read_fixed(hash_ptr);
         let pt: PreimageType = preimage_type.try_into().unwrap();
@@ -132,7 +132,7 @@ pub fn resolve_preimage_impl(
             .and_then(|m| m.get(&hash))
         {
             let calculated_hash: [u8; 32] = match pt {
-                PreimageType::Keccak256 => Keccak256::digest(preimage).into(),
+                PreimageType::Keccak256 => arbutil::crypto::keccak(preimage),
                 PreimageType::Sha2_256 => Sha256::digest(preimage).into(),
                 PreimageType::EthVersionedHash => hash,
                 PreimageType::DACertificate => hash,
