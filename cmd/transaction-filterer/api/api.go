@@ -143,6 +143,11 @@ func NewStack(
 	txOpts *bind.TransactOpts,
 	sequencerClient *ethclient.Client,
 ) (*node.Node, *TransactionFiltererAPI, error) {
+	// This binary serves only the transactionfilterer namespace; pin it so an http/ws
+	// api config can't leave it unreachable. Must be set before node.New captures the config.
+	stackConfig.HTTPModules = []string{gethexec.TransactionFiltererNamespace}
+	stackConfig.WSModules = []string{gethexec.TransactionFiltererNamespace}
+
 	stack, err := node.New(stackConfig)
 	if err != nil {
 		return nil, nil, err

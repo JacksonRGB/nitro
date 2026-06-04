@@ -422,6 +422,8 @@ func CreateExecutionNode(
 				return &configFetcher.Get().TransactionFiltering.TransactionFiltererRPCClient
 			}
 			execEngine.SetTransactionFiltererRPCClient(NewTransactionFiltererRPCClient(filtererConfigFetcher))
+		} else if config.TransactionFiltering.Enable && !config.TransactionFiltering.DisableDelayedSequencingFilter {
+			return nil, errors.New("transaction filtering enabled but execution.transaction-filtering.transaction-filterer-rpc-client.url is not set - filtered delayed messages would halt the delayed sequencer and cannot auto-resolve")
 		}
 		sequencer, err = NewSequencer(
 			execEngine, parentChainReader, seqConfigFetcher, seqParentChain, eventFilter, addressFilterService)
