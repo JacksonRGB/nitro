@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [v3.11.0-rc.2](https://github.com/OffchainLabs/nitro-private/compare/v3.11.0-rc.1...v3.11.0-rc.2) - 2026-06-05
+
+### Changed
+
+- `--node.transaction-streamer.shutdown-on-blockhash-mismatch` now defaults to `true`: on a feed-vs-local block hash mismatch the node refuses to persist or rebroadcast the result and shuts down gracefully.
+- Update README.md with support policy.
+
+### Fixed
+
+- pin nitro-testnode master branch.
+- Sequencer no longer rejects clean transactions following a filtered one in the same block. `PreTxFilter` now operates on a fresh per-tx `addressCheckerState` instead of inheriting the previous tx's filter state.
+- Do not combine multi-gas refunds with EVM refunds.
+
 ## [v3.11.0-rc.1](https://github.com/OffchainLabs/nitro/compare/v3.10.0...v3.11.0-rc.1) - 2026-06-02
 
 ### Configuration
@@ -494,5 +507,4 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 - Implement preimage recorder for `DelayedMessageDatabase` interface: [[PR]](https://github.com/OffchainLabs/nitro/pull/4119)
 - Implement recording of preimages related to sequencer batches (DA providers): [[PR]](https://github.com/OffchainLabs/nitro/pull/4133)
 - Add new boolean option to `BlocksReExecutor` called `CommitStateToDisk` that will allow `BlocksReExecutor.Blocks` range to not only re-executes blocks but it will also commit their state to triedb on disk. [[PR]](https://github.com/OffchainLabs/nitro/pull/4132)
-
 
