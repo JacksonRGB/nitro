@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
-## [v3.11.0-rc.2](https://github.com/OffchainLabs/nitro-private/compare/v3.11.0-rc.1...v3.11.0-rc.2) - 2026-06-05
+## [v3.11.0-rc.2](https://github.com/OffchainLabs/nitro/compare/v3.11.0-rc.1...v3.11.0-rc.2) - 2026-06-05
 
 ### Changed
 
