@@ -9,6 +9,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/vm"
+
 	"github.com/offchainlabs/nitro/arbcompress"
 )
 
@@ -29,14 +30,14 @@ func main() {
 	dict := arbcompress.EmptyDictionary
 	if len(os.Args) == 3 {
 		d, err := strconv.Atoi(os.Args[2])
-		if err != nil {
+		if err != nil || (d != 0 && d != 1) {
 			fmt.Fprintf(os.Stderr, "Invalid dictionary: %v\n", err)
 			os.Exit(1)
 		}
 		dict = arbcompress.Dictionary(d)
 	}
 
-	compressed, err := arbcompress.Compress(wasmBytes, arbcompress.LEVEL_WELL, dict)
+	code, err := arbcompress.Compress(wasmBytes, arbcompress.LEVEL_WELL, dict)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Compression error: %v\n", err)
 		os.Exit(1)
@@ -45,7 +46,7 @@ func main() {
 	// Stylus prefix: 0xEF 0xF0 0x00 <dictionary_byte>
 	// Matches state.NewStylusPrefix(byte(dict)) from go-ethereum/core/state/statedb_arbitrum.go
 	prefix := []byte{0xEF, 0xF0, 0x00, byte(dict)}
-	code := append(prefix, compressed...)
+	code = append(prefix, code...)
 
 	// Build EVM init code matching deployContractInitCode from system_tests/common_test.go.
 	// The 42-byte prelude copies the contract code from after itself and returns it.
