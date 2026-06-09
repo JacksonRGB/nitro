@@ -574,6 +574,14 @@ func TestAddressFilterCallCodeToEOA(t *testing.T) {
 	runInnerCallFilterTest(t, true, (*localgen.AddressFilterTest).CallcodeTarget)
 }
 
+func TestAddressFilterStaticCallToContract(t *testing.T) {
+	runInnerCallFilterTest(t, false, (*localgen.AddressFilterTest).StaticcallTargetTx)
+}
+
+func TestAddressFilterStaticCallToEOA(t *testing.T) {
+	runInnerCallFilterTest(t, true, (*localgen.AddressFilterTest).StaticcallTargetTx)
+}
+
 func TestAddressFilterDisabled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -58,6 +58,14 @@ contract AddressFilterTest {
         emit CallResult(success);
     }
 
+    /// @notice Makes a STATICCALL to the target address (non-view, sendable as a transaction)
+    function staticcallTargetTx(
+        address target
+    ) external returns (bool success) {
+        (success,) = target.staticcall("");
+        emit CallResult(success);
+    }
+
     /// @notice Simple function that can be called by other contracts
     function noop() external pure {}
 
