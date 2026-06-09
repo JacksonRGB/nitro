@@ -410,19 +410,11 @@ func TestPrecheckerFilterManualRedeem(t *testing.T) {
 
 	report := externalEndpoint.NextReport(t)
 	checkPrecheckerReportFields(t, ctx, builder, report, redeemTx)
-	// Outer tx targets ArbRetryableTx; contractAddr surfaces via the scheduled inner retry through
-	// both paths simultaneously: the inner tx's To (ReasonTo) and a pushed contract frame during
-	// execution (ReasonContractAddress). Both must appear in the same report.
-	reasons := make(map[filter.FilterReasonType]bool)
-	for _, rec := range report.FilteredAddresses {
-		if rec.Address != contractAddr {
-			continue
-		}
-		reasons[rec.Reason] = true
-		require.Nil(t, rec.EventRuleMatch, "cascade reasons must not carry EventRuleMatch")
-	}
-	require.True(t, reasons[filter.ReasonContractAddress], "expected ReasonContractAddress, got %v", reasons)
-	require.True(t, reasons[filter.ReasonTo], "expected ReasonTo, got %v", reasons)
+	// Outer tx targets ArbRetryableTx; the scheduled inner redeem tx has tx.To = contractAddr,
+	// which `touchAddresses` records as ReasonTo. The inner execution is a top-level state-transition
+	// call (not an opcode), so ReasonCallTarget does not fire here.
+	rec := requireFilteredAddressWithReason(t, report, contractAddr, filter.ReasonTo)
+	require.Nil(t, rec.EventRuleMatch, "from/to filter must not carry event-rule payload")
 }
 
 // TestPrecheckerFilterContractTriggeredRedeem verifies that the forwarder's
@@ -580,6 +572,6 @@ func TestPrecheckerFilterContractCall(t *testing.T) {
 
 	report := externalEndpoint.NextReport(t)
 	checkPrecheckerReportFields(t, ctx, builder, report, tx)
-	rec := requireFilteredAddressWithReason(t, report, filteredTargetAddr, filter.ReasonContractAddress)
-	require.Nil(t, rec.EventRuleMatch, "contract-address reason must not carry EventRuleMatch")
+	rec := requireFilteredAddressWithReason(t, report, filteredTargetAddr, filter.ReasonCallTarget)
+	require.Nil(t, rec.EventRuleMatch, "call-target reason must not carry EventRuleMatch")
 }
