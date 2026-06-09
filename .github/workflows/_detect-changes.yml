@@ -86,9 +86,17 @@ jobs:
           fi
           # Skip only when the latest *completed* run was green; a failing code
           # run must not be masked by an earlier success on the same branch.
-          latest_success=$(gh api \
-            "repos/$REPO/actions/workflows/ci.yml/runs" \
-            -f "branch=$branch" \
-            -f "per_page=100" \
-            --jq '([.workflow_runs[] | select(.conclusion != null) | .conclusion][0]) == "success"' 2>/dev/null || echo false)
-          echo "has_prior_success=$latest_success" >> "$GITHUB_OUTPUT"
+          # --method GET is required: -f params would otherwise make gh POST.
+          if conclusion=$(gh api --method GET \
+                "repos/$REPO/actions/workflows/ci.yml/runs" \
+                -f "branch=$branch" \
+                -f "per_page=20" \
+                --jq '[.workflow_runs[] | select(.conclusion != null) | .conclusion][0] // ""'); then
+            [ "$conclusion" = "success" ] && result=true || result=false
+          else
+            # Default to running the full suite, but make the failure visible
+            # rather than silently disabling the skip optimization forever.
+            echo "::warning::Could not query prior CI runs for '$branch'; running full suite."
+            result=false
+          fi
+          echo "has_prior_success=$result" >> "$GITHUB_OUTPUT"
