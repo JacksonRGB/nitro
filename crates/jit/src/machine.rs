@@ -282,8 +282,10 @@ impl WasmEnv {
             return Ok(&mut self.input);
         }
 
+        // SAFETY: signal() is async-signal-safe; SIG_IGN is a valid handler that
+        // suppresses SIGCHLD and prevents child processes from becoming zombies.
         unsafe {
-            libc::signal(libc::SIGCHLD, libc::SIG_IGN); // avoid making zombies
+            libc::signal(libc::SIGCHLD, libc::SIG_IGN);
         }
 
         let stdin = io::stdin();
