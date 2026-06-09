@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/arbitrum/filter"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -415,19 +416,16 @@ func TestAddressFilterCall(t *testing.T) {
 	}
 	foundTarget := false
 	for _, fa := range report.FilteredAddresses {
-		if fa.Address == targetAddr {
+		if fa.Address == targetAddr && fa.FilterReason.Reason == filter.ReasonContractAddress {
 			if fa.FilterReason.EventRuleMatch != nil {
 				t.Fatal("expected nil EventRuleMatch for direct address filter via CALL")
-			}
-			if fa.FilterReason.Reason != filter.ReasonContractAddress {
-				t.Fatalf("expected filter reason %q, got %q", filter.ReasonContractAddress, fa.FilterReason.Reason)
 			}
 			foundTarget = true
 			break
 		}
 	}
 	if !foundTarget {
-		t.Fatalf("report should contain filtered target address %s", targetAddr.Hex())
+		t.Fatalf("report should contain filtered target address %s with reason %s", targetAddr.Hex(), filter.ReasonContractAddress)
 	}
 
 	// Deploy another target (not filtered) - should succeed
@@ -478,6 +476,102 @@ func TestAddressFilterStaticCall(t *testing.T) {
 	Require(t, err)
 	_, err = builder.L2.EnsureTxSucceeded(tx)
 	Require(t, err)
+}
+
+// runInnerCallFilterTest exercises an inner CALL-family opcode (CALL / DELEGATECALL / CALLCODE)
+// from a wrapper contract to either a filtered EOA or a filtered contract, and asserts that the
+// target appears in the report with ReasonCallTarget.
+func runInnerCallFilterTest(t *testing.T, useEOATarget bool, invoke func(*localgen.AddressFilterTest, *bind.TransactOpts, common.Address) (*types.Transaction, error)) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
+	builder.isSequencer = true
+	filteringReportStack, endpoint := SetupFilteringReport(t)
+	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = filteringReportStack.HTTPEndpoint()
+	cleanup := builder.Build(t)
+	defer cleanup()
+
+	_, caller := deployAddressFilterTestContract(t, ctx, builder)
+
+	var filteredAddr common.Address
+	if useEOATarget {
+		builder.L2Info.GenerateAccount("FilteredEOA")
+		filteredAddr = builder.L2Info.GetAddress("FilteredEOA")
+	} else {
+		filteredAddr, _ = deployAddressFilterTestContract(t, ctx, builder)
+	}
+
+	checker := newHashedChecker([]common.Address{filteredAddr})
+	builder.L2.ExecNode.ExecEngine.SetAddressChecker(t, checker)
+
+	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
+	tx, err := invoke(caller, &auth, filteredAddr)
+	if err == nil {
+		t.Fatal("expected inner call to filtered address to be rejected")
+	}
+	if !isFilteredError(err) {
+		t.Fatalf("expected filtered error, got: %v", err)
+	}
+
+	report := endpoint.NextReport(t)
+	CheckCommonReportFields(t, ctx, builder, report, tx)
+	if report.IsDelayed {
+		t.Fatal("report should not be marked as delayed")
+	}
+	found := false
+	for _, fa := range report.FilteredAddresses {
+		if fa.Address == filteredAddr && fa.FilterReason.Reason == filter.ReasonCallTarget {
+			if fa.FilterReason.EventRuleMatch != nil {
+				t.Fatal("expected nil EventRuleMatch for call-target filter")
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("report should contain filtered address %s with reason %s, got %+v", filteredAddr.Hex(), filter.ReasonCallTarget, report.FilteredAddresses)
+	}
+
+	// Sanity: an unfiltered target should pass.
+	var cleanAddr common.Address
+	if useEOATarget {
+		builder.L2Info.GenerateAccount("CleanEOA")
+		cleanAddr = builder.L2Info.GetAddress("CleanEOA")
+	} else {
+		cleanAddr, _ = deployAddressFilterTestContract(t, ctx, builder)
+	}
+	auth = builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
+	tx, err = invoke(caller, &auth, cleanAddr)
+	Require(t, err)
+	_, err = builder.L2.EnsureTxSucceeded(tx)
+	Require(t, err)
+	endpoint.AssertNoReport(t, 500*time.Millisecond)
+}
+
+func TestAddressFilterCallToContract(t *testing.T) {
+	runInnerCallFilterTest(t, false, (*localgen.AddressFilterTest).CallTarget)
+}
+
+func TestAddressFilterCallToEOA(t *testing.T) {
+	runInnerCallFilterTest(t, true, (*localgen.AddressFilterTest).CallTarget)
+}
+
+func TestAddressFilterDelegateCallToContract(t *testing.T) {
+	runInnerCallFilterTest(t, false, (*localgen.AddressFilterTest).DelegatecallTarget)
+}
+
+func TestAddressFilterDelegateCallToEOA(t *testing.T) {
+	runInnerCallFilterTest(t, true, (*localgen.AddressFilterTest).DelegatecallTarget)
+}
+
+func TestAddressFilterCallCodeToContract(t *testing.T) {
+	runInnerCallFilterTest(t, false, (*localgen.AddressFilterTest).CallcodeTarget)
+}
+
+func TestAddressFilterCallCodeToEOA(t *testing.T) {
+	runInnerCallFilterTest(t, true, (*localgen.AddressFilterTest).CallcodeTarget)
 }
 
 func TestAddressFilterDisabled(t *testing.T) {

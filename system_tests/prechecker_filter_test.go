@@ -177,15 +177,14 @@ func newPrecheckerRetryableParams(t *testing.T, ctx context.Context, builder *No
 	}
 }
 
-// requireFilteredAddress finds a record for addr and returns it.
-func requireFilteredAddress(t *testing.T, report *addressfilter.FilteredTxReport, addr common.Address) *filter.FilteredAddressRecord {
+func requireFilteredAddressWithReason(t *testing.T, report *addressfilter.FilteredTxReport, addr common.Address, reason filter.FilterReasonType) *filter.FilteredAddressRecord {
 	t.Helper()
 	for i := range report.FilteredAddresses {
-		if report.FilteredAddresses[i].Address == addr {
+		if report.FilteredAddresses[i].Address == addr && report.FilteredAddresses[i].Reason == reason {
 			return &report.FilteredAddresses[i]
 		}
 	}
-	t.Fatalf("report should contain filtered address %s, got %+v", addr.Hex(), report.FilteredAddresses)
+	t.Fatalf("report should contain filtered address %s with reason %s, got %+v", addr.Hex(), reason, report.FilteredAddresses)
 	return nil
 }
 
@@ -230,8 +229,7 @@ func TestPrecheckerFilterDirectAddress(t *testing.T) {
 
 	report := externalEndpoint.NextReport(t)
 	checkPrecheckerReportFields(t, ctx, builder, report, txTo)
-	rec := requireFilteredAddress(t, report, filteredAddr)
-	require.Equal(t, filter.ReasonTo, rec.Reason)
+	rec := requireFilteredAddressWithReason(t, report, filteredAddr, filter.ReasonTo)
 	require.Nil(t, rec.EventRuleMatch, "from/to filter must not carry event-rule payload")
 
 	// tx FROM filtered address via forwarder should be rejected and reported with ReasonFrom
@@ -244,8 +242,7 @@ func TestPrecheckerFilterDirectAddress(t *testing.T) {
 
 	report = externalEndpoint.NextReport(t)
 	checkPrecheckerReportFields(t, ctx, builder, report, txFrom)
-	rec = requireFilteredAddress(t, report, filteredAddr)
-	require.Equal(t, filter.ReasonFrom, rec.Reason)
+	rec = requireFilteredAddressWithReason(t, report, filteredAddr, filter.ReasonFrom)
 	require.Nil(t, rec.EventRuleMatch, "from/to filter must not carry event-rule payload")
 
 	// tx between non-filtered addresses via forwarder should forward and succeed
@@ -361,8 +358,7 @@ func TestPrecheckerFilterEvents(t *testing.T) {
 
 	report := externalEndpoint.NextReport(t)
 	checkPrecheckerReportFields(t, ctx, builder, report, txFiltered)
-	rec := requireFilteredAddress(t, report, filteredAddr)
-	require.Equal(t, filter.ReasonEventRule, rec.Reason)
+	rec := requireFilteredAddressWithReason(t, report, filteredAddr, filter.ReasonEventRule)
 	require.NotNil(t, rec.EventRuleMatch, "event-rule reason must carry EventRuleMatch")
 	require.Equal(t, "Transfer(address,address,uint256)", rec.EventRuleMatch.MatchedEvent)
 	require.Equal(t, 2, rec.EventRuleMatch.MatchedTopicIndex, "filteredAddr is the `to` arg, indexed at topic[2]")
@@ -584,7 +580,6 @@ func TestPrecheckerFilterContractCall(t *testing.T) {
 
 	report := externalEndpoint.NextReport(t)
 	checkPrecheckerReportFields(t, ctx, builder, report, tx)
-	rec := requireFilteredAddress(t, report, filteredTargetAddr)
-	require.Equal(t, filter.ReasonContractAddress, rec.Reason, "filtered contract should be flagged via PushContract bookkeeping")
+	rec := requireFilteredAddressWithReason(t, report, filteredTargetAddr, filter.ReasonContractAddress)
 	require.Nil(t, rec.EventRuleMatch, "contract-address reason must not carry EventRuleMatch")
 }
