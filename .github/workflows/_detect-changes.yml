@@ -16,9 +16,13 @@ on:
       code_changed:
         description: 'True if any file other than CHANGELOG.md or changelog/** changed.'
         value: ${{ jobs.changes.outputs.code_changed }}
+      has_prior_success:
+        description: 'True if a prior successful CI run exists for this branch.'
+        value: ${{ jobs.changes.outputs.has_prior_success }}
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   changes:
@@ -29,6 +33,7 @@ jobs:
       bold_legacy_changed: ${{ steps.changed.outputs.bold_legacy_any_changed }}
       changelog_added: ${{ steps.changed.outputs.changelog_added_files }}
       code_changed: ${{ steps.changed.outputs.code_any_changed }}
+      has_prior_success: ${{ steps.prior-runs.outputs.has_prior_success }}
 
     steps:
       - name: Checkout
@@ -66,3 +71,24 @@ jobs:
               - '**'
               - '!CHANGELOG.md'
               - '!changelog/**'
+
+      - name: Check for prior successful CI runs
+        id: prior-runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch="${{ github.head_ref }}"
+          if [ -z "$branch" ]; then
+            echo "has_prior_success=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          count=$(gh api \
+            "repos/${{ github.repository }}/actions/workflows/ci.yml/runs" \
+            -f "branch=$branch" \
+            -f "per_page=100" \
+            --jq '[.workflow_runs[] | select(.conclusion == "success")] | length' 2>/dev/null || echo 0)
+          if [ "$count" -gt 0 ]; then
+            echo "has_prior_success=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_prior_success=false" >> "$GITHUB_OUTPUT"
+          fi
