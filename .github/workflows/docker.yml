@@ -16,9 +16,20 @@ permissions:
   contents: read
 
 jobs:
+  # Detect whether anything other than the changelog changed. code_changed is
+  # "any file other than CHANGELOG.md or changelog/**", so a changelog-only PR
+  # leaves it false and skips the build below.
+  changes:
+    uses: ./.github/workflows/_detect-changes.yml
+    secrets: inherit
+
   docker:
     name: Docker build
     runs-on: arbitrator-ci
+    needs: changes
+    # Skip the build for changelog-only PRs. merge_group and manual runs always
+    # build, since detect-changes has no PR diff base for those events.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code_changed == 'true'
 
     steps:
       - name: Checkout
