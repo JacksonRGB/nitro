@@ -230,7 +230,7 @@ func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableErro
 	}
 	externalEndpointSuccessesCounter.Inc(1)
 	*consecutiveRetryableErrors = 0
-	log.Debug("Successfully forwarded report to external endpoint", "messageId", *msg.MessageId, "body", *msg.Body)
+	log.Info("Successfully forwarded report to external endpoint", "messageId", *msg.MessageId, "body", *msg.Body)
 	if err = r.queueClient.Delete(ctx, *msg.ReceiptHandle); err != nil {
 		sqsDeleteFailuresCounter.Inc(1)
 		log.Error("Failed to delete SQS message after forwarding", "err", err, "messageId", *msg.MessageId)
