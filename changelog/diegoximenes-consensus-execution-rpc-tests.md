@@ -3,4 +3,4 @@
 - Consensus RPC client now restores the `ErrRetrySequencer` sentinel across the RPC boundary, so the sequencer requeues transactions during transient coordinator handovers (e.g. Redis switchover) instead of surfacing the error to `eth_sendRawTransaction` clients.
 
 ### Internal
-- Re-enable CI tests for consensus and execution nodes connected over JSON RPC, split into `defaults-A-consensus-execution-rpc` / `defaults-B-consensus-execution-rpc` modes of the standard go test suite, gated by the `run-defaults-a-consensus-execution-rpc` / `run-defaults-b-consensus-execution-rpc` workflow inputs.
+- Re-enable CI tests for consensus and execution nodes connected over JSON RPC, split into `consensus-execution-rpc-A` / `consensus-execution-rpc-B` modes of the standard go test suite, gated by the `run-consensus-execution-rpc-a` / `run-consensus-execution-rpc-b` workflow inputs.
