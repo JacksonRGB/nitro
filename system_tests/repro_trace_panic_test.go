@@ -40,7 +40,7 @@ func TestReproTraceTimeoutEmptyCallstackPanic(t *testing.T) {
 			for bn := uint64(1); bn <= lastBlock; bn++ {
 				var blockTrace json.RawMessage
 				err := l2rpc.CallContext(ctx, &blockTrace, "debug_traceBlockByNumber",
-					rpc.BlockNumber(bn),
+					rpc.BlockNumber(bn), // #nosec G115
 					map[string]interface{}{"tracer": tracer, "timeout": "1ns"})
 				// A timed-out trace must return an error, never crash the handler.
 				if err != nil && strings.Contains(err.Error(), "method handler crashed") {
