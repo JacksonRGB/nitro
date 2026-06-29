@@ -4,11 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
-## [v3.11.1-rc.1](https://github.com/OffchainLabs/nitro/compare/v3.11.0...v3.11.1-rc.1) - 2026-06-23
+## [v3.11.1](https://github.com/OffchainLabs/nitro/compare/v3.11.0...v3.11.1) - 2026-06-29
 
 ### Fixed
 
 - The Stylus warm-start cache is now rolled back when a transaction is dropped after executing. [[commit]](https://github.com/OffchainLabs/nitro/commit/860a15a8b83e0873732c67abd1593653500fb7e9)
+- Use mutex for history reads [[commit]](https://github.com/OffchainLabs/nitro/commit/8512b8cbf477b35e9717f80fb4b32ebe6ea30167)
 
 ## [v3.11.0](https://github.com/OffchainLabs/nitro/compare/v3.10.0...v3.11.0) - 2026-06-22
 
