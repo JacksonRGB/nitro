@@ -297,6 +297,7 @@ type ExecutionEngine struct {
 	eventFilter                    *eventfilter.EventFilter
 	transactionFiltererRPCClient   *TransactionFiltererRPCClient
 	filteringReportRPCClient       *FilteringReportRPCClient
+	grpcLogPublisher               *GRPCLogPublisher
 	disableDelayedSequencingFilter bool
 }
 
@@ -331,6 +332,7 @@ func NewExecutionEngine(
 		disableDelayedSequencingFilter: disableDelayedSequencingFilter,
 		addressChecker:                 addressChecker,
 		filteringReportRPCClient:       filteringReportRPCClient,
+		grpcLogPublisher:               NewGRPCLogPublisher(),
 	}
 }
 
@@ -1079,6 +1081,9 @@ func (s *ExecutionEngine) appendBlock(block *types.Block, statedb *state.StateDB
 		}
 	}
 	blockWriteToDbTimer.Update(time.Since(startTime).Nanoseconds())
+	if s.grpcLogPublisher != nil {
+		s.grpcLogPublisher.Publish(block, logs)
+	}
 	baseFeeGauge.Update(block.BaseFee().Int64())
 	txCountHistogram.Update(int64(len(block.Transactions()) - 1))
 	var blockGasused uint64
@@ -1323,6 +1328,12 @@ func (s *ExecutionEngine) Start(ctxIn context.Context) error {
 	ctx, err := s.GetContextSafe()
 	if err != nil {
 		return err
+	}
+	if s.grpcLogPublisher != nil {
+		if err := s.grpcLogPublisher.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start gRPC log publisher: %w", err)
+		}
+		s.TrackChild(s.grpcLogPublisher)
 	}
 
 	if s.transactionFiltererRPCClient != nil {
