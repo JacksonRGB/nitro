@@ -52,6 +52,7 @@ func TestGRPCLogPublisherStreamsAllBlockLogs(t *testing.T) {
 		TxIndex: 3,
 		Index:   7,
 	}
+	firstSender := common.HexToAddress("0x3333333333333333333333333333333333333333")
 	secondLog := &types.Log{
 		Address: common.HexToAddress("0x2222222222222222222222222222222222222222"),
 		Data:    []byte{0x03},
@@ -59,28 +60,29 @@ func TestGRPCLogPublisherStreamsAllBlockLogs(t *testing.T) {
 		TxIndex: 4,
 		Index:   8,
 	}
+	secondSender := common.HexToAddress("0x4444444444444444444444444444444444444444")
 	publisher.PublishReceipt(&types.Receipt{
 		BlockHash:   block.Hash(),
 		BlockNumber: block.Number(),
 		Logs:        []*types.Log{firstLog},
-	}, 41)
+	}, firstSender, 41)
 	publisher.PublishReceipt(&types.Receipt{
 		BlockHash:   block.Hash(),
 		BlockNumber: block.Number(),
 		Logs:        []*types.Log{secondLog},
-	}, 41)
+	}, secondSender, 41)
 
 	firstEvent, err := stream.Recv()
 	if err != nil {
 		t.Fatalf("receive first log: %v", err)
 	}
-	assertLogStreamEvent(t, firstEvent.GetFields(), block, firstLog)
+	assertLogStreamEvent(t, firstEvent.GetFields(), block, firstSender, firstLog)
 
 	secondEvent, err := stream.Recv()
 	if err != nil {
 		t.Fatalf("receive second log: %v", err)
 	}
-	assertLogStreamEvent(t, secondEvent.GetFields(), block, secondLog)
+	assertLogStreamEvent(t, secondEvent.GetFields(), block, secondSender, secondLog)
 }
 
 func waitForLogStreamSubscriber(t *testing.T, publisher *GRPCLogPublisher) {
@@ -98,7 +100,7 @@ func waitForLogStreamSubscriber(t *testing.T, publisher *GRPCLogPublisher) {
 	t.Fatal("timed out waiting for gRPC log stream subscriber")
 }
 
-func assertLogStreamEvent(t *testing.T, fields map[string]*structpb.Value, block *types.Block, eventLog *types.Log) {
+func assertLogStreamEvent(t *testing.T, fields map[string]*structpb.Value, block *types.Block, sender common.Address, eventLog *types.Log) {
 	t.Helper()
 	if got := fields["address"].GetStringValue(); got != eventLog.Address.Hex() {
 		t.Errorf("address: got %s want %s", got, eventLog.Address.Hex())
@@ -114,6 +116,9 @@ func assertLogStreamEvent(t *testing.T, fields map[string]*structpb.Value, block
 	}
 	if got := fields["transaction_hash"].GetStringValue(); got != eventLog.TxHash.Hex() {
 		t.Errorf("transaction hash: got %s want %s", got, eventLog.TxHash.Hex())
+	}
+	if got := fields["sender"].GetStringValue(); got != sender.Hex() {
+		t.Errorf("sender: got %s want %s", got, sender)
 	}
 	if got := fields["transaction_index"].GetStringValue(); got != strconv.FormatUint(uint64(eventLog.TxIndex), 10) {
 		t.Errorf("transaction index: got %s want %d", got, eventLog.TxIndex)

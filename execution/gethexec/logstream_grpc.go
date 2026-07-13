@@ -38,7 +38,7 @@ const (
 // LogStreamServer is the server API for the local execution-log stream.
 //
 // The response fields are address, topics, data, block_number,
-// previous_block_number, block_hash, transaction_hash, transaction_index,
+// previous_block_number, block_hash, transaction_hash, sender, transaction_index,
 // log_index, removed, phase, and
 // emitted_at_unix_nano. Numeric fields are decimal strings so clients do not
 // lose precision when decoding google.protobuf.Struct. phase is always
@@ -141,6 +141,7 @@ type grpcLogBatch struct {
 	blockHash           common.Hash
 	blockNum            uint64
 	previousBlockNumber uint64
+	sender              common.Address
 	logs                []*types.Log
 	emittedAt           time.Time
 	phase               string
@@ -227,7 +228,7 @@ func (p *GRPCLogPublisher) Start(ctx context.Context) error {
 
 // PublishReceipt queues logs as soon as their transaction has been executed.
 // It never waits for a network operation or a subscriber.
-func (p *GRPCLogPublisher) PublishReceipt(receipt *types.Receipt, previousBlockNumber uint64) {
+func (p *GRPCLogPublisher) PublishReceipt(receipt *types.Receipt, sender common.Address, previousBlockNumber uint64) {
 	if p == nil || p.stopped.Load() || receipt == nil || len(receipt.Logs) == 0 {
 		return
 	}
@@ -240,6 +241,7 @@ func (p *GRPCLogPublisher) PublishReceipt(receipt *types.Receipt, previousBlockN
 		blockHash:           receipt.BlockHash,
 		blockNum:            blockNum,
 		previousBlockNumber: previousBlockNumber,
+		sender:              sender,
 		logs:                append([]*types.Log(nil), receipt.Logs...),
 		emittedAt:           time.Now().UTC(),
 		phase:               "receipt",
@@ -366,6 +368,7 @@ func grpcLogEvent(batch grpcLogBatch, eventLog *types.Log) *structpb.Struct {
 		"previous_block_number": structpb.NewStringValue(strconv.FormatUint(batch.previousBlockNumber, 10)),
 		"block_hash":            structpb.NewStringValue(hexutil.Encode(batch.blockHash[:])),
 		"transaction_hash":      structpb.NewStringValue(eventLog.TxHash.Hex()),
+		"sender":                structpb.NewStringValue(batch.sender.Hex()),
 		"transaction_index":     structpb.NewStringValue(strconv.FormatUint(uint64(eventLog.TxIndex), 10)),
 		"log_index":             structpb.NewStringValue(strconv.FormatUint(uint64(eventLog.Index), 10)),
 		"removed":               structpb.NewBoolValue(eventLog.Removed),

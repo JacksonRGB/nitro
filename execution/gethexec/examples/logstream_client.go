@@ -73,6 +73,7 @@ func printLogEvent(event *structpb.Struct) {
 	fmt.Fprintf(os.Stdout, "previous_block_number: %s\n", stringField(fields, "previous_block_number"))
 	fmt.Fprintf(os.Stdout, "block_hash (provisional): %s\n", stringField(fields, "block_hash"))
 	fmt.Fprintf(os.Stdout, "transaction_hash: %s\n", stringField(fields, "transaction_hash"))
+	fmt.Fprintf(os.Stdout, "sender: %s\n", stringField(fields, "sender"))
 	fmt.Fprintf(os.Stdout, "transaction_index: %s\n", stringField(fields, "transaction_index"))
 	fmt.Fprintf(os.Stdout, "log_index: %s\n", stringField(fields, "log_index"))
 	fmt.Fprintf(os.Stdout, "removed: %t\n", boolField(fields, "removed"))

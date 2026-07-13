@@ -307,8 +307,8 @@ type receiptPublishingHooks struct {
 	previousBlockNumber uint64
 }
 
-func (h *receiptPublishingHooks) ReceiptProduced(receipt *types.Receipt) {
-	h.publisher.PublishReceipt(receipt, h.previousBlockNumber)
+func (h *receiptPublishingHooks) ReceiptProduced(receipt *types.Receipt, sender common.Address) {
+	h.publisher.PublishReceipt(receipt, sender, h.previousBlockNumber)
 }
 
 func (s *ExecutionEngine) withReceiptPublisher(hooks arbos.SequencingHooks, previousBlockNumber uint64) arbos.SequencingHooks {

@@ -254,7 +254,7 @@ type SequencingHooks interface {
 // executed transaction. At this point the receipt logs are available, but the
 // block is still being assembled and its final hash is not known yet.
 type ReceiptProducedHook interface {
-	ReceiptProduced(*types.Receipt)
+	ReceiptProduced(*types.Receipt, common.Address)
 }
 
 type NoopSequencingHooks struct {
@@ -299,9 +299,9 @@ func (n *NoopSequencingHooks) SetReceiptProducedHook(hook ReceiptProducedHook) {
 	n.receiptHook = hook
 }
 
-func (n *NoopSequencingHooks) ReceiptProduced(receipt *types.Receipt) {
+func (n *NoopSequencingHooks) ReceiptProduced(receipt *types.Receipt, sender common.Address) {
 	if n.receiptHook != nil {
-		n.receiptHook.ReceiptProduced(receipt)
+		n.receiptHook.ReceiptProduced(receipt, sender)
 	}
 }
 
@@ -633,7 +633,7 @@ func ProduceBlockAdvanced(
 
 		if !isMsgForPrefetch {
 			if receiptHook, ok := sequencingHooks.(ReceiptProducedHook); ok {
-				receiptHook.ReceiptProduced(receipt)
+				receiptHook.ReceiptProduced(receipt, sender)
 			}
 		}
 
