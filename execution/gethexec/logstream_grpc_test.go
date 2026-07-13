@@ -27,7 +27,7 @@ func TestGRPCLogPublisherStreamsAllBlockLogs(t *testing.T) {
 	if err := publisher.Start(ctx); err != nil {
 		t.Fatalf("start publisher: %v", err)
 	}
-	defer  publisher.StopAndWait()
+	defer publisher.StopAndWait()
 
 	connection, err := grpc.DialContext(ctx, publisher.listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 	if err != nil {
@@ -59,7 +59,16 @@ func TestGRPCLogPublisherStreamsAllBlockLogs(t *testing.T) {
 		TxIndex: 4,
 		Index:   8,
 	}
-	publisher.Publish(block, []*types.Log{firstLog, secondLog})
+	publisher.PublishReceipt(&types.Receipt{
+		BlockHash:   block.Hash(),
+		BlockNumber: block.Number(),
+		Logs:        []*types.Log{firstLog},
+	}, 41)
+	publisher.PublishReceipt(&types.Receipt{
+		BlockHash:   block.Hash(),
+		BlockNumber: block.Number(),
+		Logs:        []*types.Log{secondLog},
+	}, 41)
 
 	firstEvent, err := stream.Recv()
 	if err != nil {
@@ -97,6 +106,9 @@ func assertLogStreamEvent(t *testing.T, fields map[string]*structpb.Value, block
 	if got := fields["block_number"].GetStringValue(); got != block.Number().String() {
 		t.Errorf("block number: got %s want %s", got, block.Number())
 	}
+	if got := fields["previous_block_number"].GetStringValue(); got != "41" {
+		t.Errorf("previous block number: got %s want 41", got)
+	}
 	if got := fields["block_hash"].GetStringValue(); got != block.Hash().Hex() {
 		t.Errorf("block hash: got %s want %s", got, block.Hash())
 	}
@@ -111,6 +123,9 @@ func assertLogStreamEvent(t *testing.T, fields map[string]*structpb.Value, block
 	}
 	if got := fields["data"].GetStringValue(); got != hexutil.Encode(eventLog.Data) {
 		t.Errorf("data: got %s want %s", got, hexutil.Encode(eventLog.Data))
+	}
+	if got := fields["phase"].GetStringValue(); got != "receipt" {
+		t.Errorf("phase: got %s want receipt", got)
 	}
 	topics := fields["topics"].GetListValue().GetValues()
 	if len(topics) != len(eventLog.Topics) {

@@ -250,9 +250,17 @@ type SequencingHooks interface {
 	TxFailed(error)
 }
 
+// ReceiptProducedHook is an optional callback invoked for each successfully
+// executed transaction. At this point the receipt logs are available, but the
+// block is still being assembled and its final hash is not known yet.
+type ReceiptProducedHook interface {
+	ReceiptProduced(*types.Receipt)
+}
+
 type NoopSequencingHooks struct {
 	txs               types.Transactions
 	scheduledTxsCount int
+	receiptHook       ReceiptProducedHook
 }
 
 func (n *NoopSequencingHooks) NextTxToSequence() (*types.Transaction, *arbitrum_types.ConditionalOptions, error) {
@@ -287,6 +295,16 @@ func (n *NoopSequencingHooks) TxFailed(error) {}
 
 func (n *NoopSequencingHooks) SupportsGroupRollback() bool { return false }
 
+func (n *NoopSequencingHooks) SetReceiptProducedHook(hook ReceiptProducedHook) {
+	n.receiptHook = hook
+}
+
+func (n *NoopSequencingHooks) ReceiptProduced(receipt *types.Receipt) {
+	if n.receiptHook != nil {
+		n.receiptHook.ReceiptProduced(receipt)
+	}
+}
+
 func NewNoopSequencingHooks(txes types.Transactions) *NoopSequencingHooks {
 	return &NoopSequencingHooks{txs: txes}
 }
@@ -301,6 +319,24 @@ func ProduceBlock(
 	runCtx *core.MessageRunContext,
 	exposeMultiGas bool,
 ) (*types.Block, *state.StateDB, types.Receipts, error) {
+	return ProduceBlockWithReceiptHook(
+		message, delayedMessagesRead, lastBlockHeader, statedb, chainContext, isMsgForPrefetch, runCtx, exposeMultiGas, nil,
+	)
+}
+
+// ProduceBlockWithReceiptHook executes a message while optionally observing
+// each receipt as soon as its transaction has completed execution.
+func ProduceBlockWithReceiptHook(
+	message *arbostypes.L1IncomingMessage,
+	delayedMessagesRead uint64,
+	lastBlockHeader *types.Header,
+	statedb *state.StateDB,
+	chainContext core.ChainContext,
+	isMsgForPrefetch bool,
+	runCtx *core.MessageRunContext,
+	exposeMultiGas bool,
+	receiptHook ReceiptProducedHook,
+) (*types.Block, *state.StateDB, types.Receipts, error) {
 	chainConfig := chainContext.Config()
 	lastArbosVersion := types.DeserializeHeaderExtraInformation(lastBlockHeader).ArbOSFormatVersion
 	txes, err := ParseL2Transactions(message, chainConfig.ChainID, lastArbosVersion)
@@ -309,6 +345,7 @@ func ProduceBlock(
 		txes = types.Transactions{}
 	}
 	hooks := NewNoopSequencingHooks(txes)
+	hooks.SetReceiptProducedHook(receiptHook)
 
 	return ProduceBlockAdvanced(
 		message.Header, delayedMessagesRead, lastBlockHeader, statedb, chainContext, hooks, isMsgForPrefetch, runCtx, exposeMultiGas, nil,
@@ -592,6 +629,12 @@ func ProduceBlockAdvanced(
 				}
 			}
 			continue
+		}
+
+		if !isMsgForPrefetch {
+			if receiptHook, ok := sequencingHooks.(ReceiptProducedHook); ok {
+				receiptHook.ReceiptProduced(receipt)
+			}
 		}
 
 		if tx.Type() == types.ArbitrumInternalTxType {

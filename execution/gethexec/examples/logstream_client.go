@@ -1,4 +1,4 @@
-// Connects to the local Nitro gRPC log stream and prints every log field.
+// Connects to the local Nitro gRPC log stream and prints every receipt log.
 //
 // Run from the repository root:
 //
@@ -70,11 +70,13 @@ func printLogEvent(event *structpb.Struct) {
 	}
 	fmt.Fprintf(os.Stdout, "data: %s\n", stringField(fields, "data"))
 	fmt.Fprintf(os.Stdout, "block_number: %s\n", stringField(fields, "block_number"))
-	fmt.Fprintf(os.Stdout, "block_hash: %s\n", stringField(fields, "block_hash"))
+	fmt.Fprintf(os.Stdout, "previous_block_number: %s\n", stringField(fields, "previous_block_number"))
+	fmt.Fprintf(os.Stdout, "block_hash (provisional): %s\n", stringField(fields, "block_hash"))
 	fmt.Fprintf(os.Stdout, "transaction_hash: %s\n", stringField(fields, "transaction_hash"))
 	fmt.Fprintf(os.Stdout, "transaction_index: %s\n", stringField(fields, "transaction_index"))
 	fmt.Fprintf(os.Stdout, "log_index: %s\n", stringField(fields, "log_index"))
 	fmt.Fprintf(os.Stdout, "removed: %t\n", boolField(fields, "removed"))
+	fmt.Fprintf(os.Stdout, "phase: %s\n", stringField(fields, "phase"))
 	fmt.Fprintf(os.Stdout, "emitted_at_unix_nano: %s\n\n", stringField(fields, "emitted_at_unix_nano"))
 }
 

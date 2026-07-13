@@ -37,10 +37,13 @@ const (
 
 // LogStreamServer is the server API for the local execution-log stream.
 //
-// The response fields are address, topics, data, block_number, block_hash,
-// transaction_hash, transaction_index, log_index, removed, and
+// The response fields are address, topics, data, block_number,
+// previous_block_number, block_hash, transaction_hash, transaction_index,
+// log_index, removed, phase, and
 // emitted_at_unix_nano. Numeric fields are decimal strings so clients do not
-// lose precision when decoding google.protobuf.Struct.
+// lose precision when decoding google.protobuf.Struct. phase is always
+// receipt: execution completed, but the block is still being assembled, so
+// block_hash is provisional.
 type LogStreamServer interface {
 	Subscribe(*emptypb.Empty, LogStream_SubscribeServer) error
 }
@@ -135,13 +138,15 @@ func logStreamSubscribeHandler(server interface{}, stream grpc.ServerStream) err
 }
 
 type grpcLogBatch struct {
-	blockHash common.Hash
-	blockNum  uint64
-	logs      []*types.Log
-	emittedAt time.Time
+	blockHash           common.Hash
+	blockNum            uint64
+	previousBlockNumber uint64
+	logs                []*types.Log
+	emittedAt           time.Time
+	phase               string
 }
 
-// GRPCLogPublisher publishes every committed EVM log to local gRPC subscribers.
+// GRPCLogPublisher publishes every EVM receipt log to local gRPC subscribers.
 // Publishing from the block-creation goroutine is deliberately non-blocking.
 type GRPCLogPublisher struct {
 	listenAddress string
@@ -220,18 +225,24 @@ func (p *GRPCLogPublisher) Start(ctx context.Context) error {
 	return nil
 }
 
-// Publish queues every log from a successfully committed block. It never waits
-// for a network operation or a subscriber.
-func (p *GRPCLogPublisher) Publish(block *types.Block, logs []*types.Log) {
-	if p == nil || p.stopped.Load() || len(logs) == 0 {
+// PublishReceipt queues logs as soon as their transaction has been executed.
+// It never waits for a network operation or a subscriber.
+func (p *GRPCLogPublisher) PublishReceipt(receipt *types.Receipt, previousBlockNumber uint64) {
+	if p == nil || p.stopped.Load() || receipt == nil || len(receipt.Logs) == 0 {
 		return
 	}
 
+	var blockNum uint64
+	if receipt.BlockNumber != nil {
+		blockNum = receipt.BlockNumber.Uint64()
+	}
 	batch := grpcLogBatch{
-		blockHash: block.Hash(),
-		blockNum:  block.NumberU64(),
-		logs:      append([]*types.Log(nil), logs...),
-		emittedAt: time.Now().UTC(),
+		blockHash:           receipt.BlockHash,
+		blockNum:            blockNum,
+		previousBlockNumber: previousBlockNumber,
+		logs:                append([]*types.Log(nil), receipt.Logs...),
+		emittedAt:           time.Now().UTC(),
+		phase:               "receipt",
 	}
 	p.queueMutex.Lock()
 	p.queuedBatches = append(p.queuedBatches, batch)
@@ -348,16 +359,18 @@ func grpcLogEvent(batch grpcLogBatch, eventLog *types.Log) *structpb.Struct {
 		topics[i] = structpb.NewStringValue(topic.Hex())
 	}
 	return &structpb.Struct{Fields: map[string]*structpb.Value{
-		"address":              structpb.NewStringValue(eventLog.Address.Hex()),
-		"topics":               structpb.NewListValue(&structpb.ListValue{Values: topics}),
-		"data":                 structpb.NewStringValue(hexutil.Encode(eventLog.Data)),
-		"block_number":         structpb.NewStringValue(strconv.FormatUint(batch.blockNum, 10)),
-		"block_hash":           structpb.NewStringValue(hexutil.Encode(batch.blockHash[:])),
-		"transaction_hash":     structpb.NewStringValue(eventLog.TxHash.Hex()),
-		"transaction_index":    structpb.NewStringValue(strconv.FormatUint(uint64(eventLog.TxIndex), 10)),
-		"log_index":            structpb.NewStringValue(strconv.FormatUint(uint64(eventLog.Index), 10)),
-		"removed":              structpb.NewBoolValue(eventLog.Removed),
-		"emitted_at_unix_nano": structpb.NewStringValue(strconv.FormatInt(batch.emittedAt.UnixNano(), 10)),
+		"address":               structpb.NewStringValue(eventLog.Address.Hex()),
+		"topics":                structpb.NewListValue(&structpb.ListValue{Values: topics}),
+		"data":                  structpb.NewStringValue(hexutil.Encode(eventLog.Data)),
+		"block_number":          structpb.NewStringValue(strconv.FormatUint(batch.blockNum, 10)),
+		"previous_block_number": structpb.NewStringValue(strconv.FormatUint(batch.previousBlockNumber, 10)),
+		"block_hash":            structpb.NewStringValue(hexutil.Encode(batch.blockHash[:])),
+		"transaction_hash":      structpb.NewStringValue(eventLog.TxHash.Hex()),
+		"transaction_index":     structpb.NewStringValue(strconv.FormatUint(uint64(eventLog.TxIndex), 10)),
+		"log_index":             structpb.NewStringValue(strconv.FormatUint(uint64(eventLog.Index), 10)),
+		"removed":               structpb.NewBoolValue(eventLog.Removed),
+		"phase":                 structpb.NewStringValue(batch.phase),
+		"emitted_at_unix_nano":  structpb.NewStringValue(strconv.FormatInt(batch.emittedAt.UnixNano(), 10)),
 	}}
 }
 

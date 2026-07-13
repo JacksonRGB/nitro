@@ -301,6 +301,37 @@ type ExecutionEngine struct {
 	disableDelayedSequencingFilter bool
 }
 
+type receiptPublishingHooks struct {
+	arbos.SequencingHooks
+	publisher           *GRPCLogPublisher
+	previousBlockNumber uint64
+}
+
+func (h *receiptPublishingHooks) ReceiptProduced(receipt *types.Receipt) {
+	h.publisher.PublishReceipt(receipt, h.previousBlockNumber)
+}
+
+func (s *ExecutionEngine) withReceiptPublisher(hooks arbos.SequencingHooks, previousBlockNumber uint64) arbos.SequencingHooks {
+	if s.grpcLogPublisher == nil {
+		return hooks
+	}
+	return &receiptPublishingHooks{
+		SequencingHooks:     hooks,
+		publisher:           s.grpcLogPublisher,
+		previousBlockNumber: previousBlockNumber,
+	}
+}
+
+func (s *ExecutionEngine) receiptPublisherHook(previousBlockNumber uint64) arbos.ReceiptProducedHook {
+	if s.grpcLogPublisher == nil {
+		return nil
+	}
+	return &receiptPublishingHooks{
+		publisher:           s.grpcLogPublisher,
+		previousBlockNumber: previousBlockNumber,
+	}
+}
+
 func NewL1PriceData() *L1PriceData {
 	return &L1PriceData{
 		msgToL1PriceData: []L1PriceDataOfMsg{},
@@ -770,7 +801,7 @@ func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.
 		lastBlockHeader,
 		statedb,
 		s.bc,
-		hooks,
+		s.withReceiptPublisher(hooks, lastBlockHeader.Number.Uint64()),
 		false,
 		core.NewMessageSequencingContext(s.wasmTargets),
 		s.exposeMultiGas,
@@ -1003,7 +1034,7 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 			currentHeader,
 			statedb,
 			s.bc,
-			filteringHooks,
+			s.withReceiptPublisher(filteringHooks, currentHeader.Number.Uint64()),
 			isMsgForPrefetch,
 			runCtx,
 			s.exposeMultiGas,
@@ -1044,7 +1075,7 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 		return block, statedb, receipts, nil
 	}
 
-	block, statedb, receipts, err := arbos.ProduceBlock(
+	block, statedb, receipts, err := arbos.ProduceBlockWithReceiptHook(
 		msg.Message,
 		msg.DelayedMessagesRead,
 		currentHeader,
@@ -1053,6 +1084,7 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 		isMsgForPrefetch,
 		runCtx,
 		s.exposeMultiGas,
+		s.receiptPublisherHook(currentHeader.Number.Uint64()),
 	)
 
 	return block, statedb, receipts, err
@@ -1081,9 +1113,6 @@ func (s *ExecutionEngine) appendBlock(block *types.Block, statedb *state.StateDB
 		}
 	}
 	blockWriteToDbTimer.Update(time.Since(startTime).Nanoseconds())
-	if s.grpcLogPublisher != nil {
-		s.grpcLogPublisher.Publish(block, logs)
-	}
 	baseFeeGauge.Update(block.BaseFee().Int64())
 	txCountHistogram.Update(int64(len(block.Transactions()) - 1))
 	var blockGasused uint64
