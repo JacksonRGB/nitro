@@ -1,4 +1,4 @@
-// Connects to the local Nitro gRPC log stream and writes one JSON object per line.
+// Connects to the local Nitro gRPC log stream and prints every log field.
 //
 // Run from the repository root:
 //
@@ -11,8 +11,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -49,7 +49,6 @@ func main() {
 		log.Fatalf("close subscription request: %v", err)
 	}
 
-	encoder := json.NewEncoder(os.Stdout)
 	for {
 		event := new(structpb.Struct)
 		if err := stream.RecvMsg(event); err != nil {
@@ -58,8 +57,37 @@ func main() {
 			}
 			log.Fatalf("receive log event: %v", err)
 		}
-		if err := encoder.Encode(event.AsMap()); err != nil {
-			log.Fatalf("encode log event: %v", err)
-		}
+		printLogEvent(event)
 	}
+}
+
+func printLogEvent(event *structpb.Struct) {
+	fields := event.GetFields()
+	fmt.Fprintf(os.Stdout, "address: %s\n", stringField(fields, "address"))
+	fmt.Fprintln(os.Stdout, "topics:")
+	for index, topic := range fields["topics"].GetListValue().GetValues() {
+		fmt.Fprintf(os.Stdout, "  [%d]: %s\n", index, topic.GetStringValue())
+	}
+	fmt.Fprintf(os.Stdout, "data: %s\n", stringField(fields, "data"))
+	fmt.Fprintf(os.Stdout, "block_number: %s\n", stringField(fields, "block_number"))
+	fmt.Fprintf(os.Stdout, "block_hash: %s\n", stringField(fields, "block_hash"))
+	fmt.Fprintf(os.Stdout, "transaction_hash: %s\n", stringField(fields, "transaction_hash"))
+	fmt.Fprintf(os.Stdout, "transaction_index: %s\n", stringField(fields, "transaction_index"))
+	fmt.Fprintf(os.Stdout, "log_index: %s\n", stringField(fields, "log_index"))
+	fmt.Fprintf(os.Stdout, "removed: %t\n", boolField(fields, "removed"))
+	fmt.Fprintf(os.Stdout, "emitted_at_unix_nano: %s\n\n", stringField(fields, "emitted_at_unix_nano"))
+}
+
+func stringField(fields map[string]*structpb.Value, name string) string {
+	if field, ok := fields[name]; ok {
+		return field.GetStringValue()
+	}
+	return "<missing>"
+}
+
+func boolField(fields map[string]*structpb.Value, name string) bool {
+	if field, ok := fields[name]; ok {
+		return field.GetBoolValue()
+	}
+	return false
 }

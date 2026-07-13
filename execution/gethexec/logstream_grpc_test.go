@@ -27,11 +27,7 @@ func TestGRPCLogPublisherStreamsAllBlockLogs(t *testing.T) {
 	if err := publisher.Start(ctx); err != nil {
 		t.Fatalf("start publisher: %v", err)
 	}
-	defer func() {
-		if err := publisher.StopAndWait(); err != nil {
-			t.Errorf("stop publisher: %v", err)
-		}
-	}()
+	defer  publisher.StopAndWait()
 
 	connection, err := grpc.DialContext(ctx, publisher.listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 	if err != nil {

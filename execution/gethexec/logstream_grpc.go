@@ -383,8 +383,7 @@ func (p *GRPCLogPublisher) StopOnly() {
 }
 
 // StopAndWait stops the server and waits for its background goroutines.
-func (p *GRPCLogPublisher) StopAndWait() error {
+func (p *GRPCLogPublisher) StopAndWait() {
 	p.StopOnly()
 	p.wg.Wait()
-	return nil
 }
